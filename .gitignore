@@ -1,0 +1,12 @@
+# Immutable dataset — copied in via setup_inputs.sh, never committed.
+inputs/
+
+# Run outputs.
+runs/
+
+# Python / uv.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+uv.lock
