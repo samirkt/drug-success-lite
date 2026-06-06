@@ -73,9 +73,45 @@ dsm/
 - `trial` — one row per NCT; label from `trial_inferred_label`. Produces
   per-phase metrics (P1→P2, P2→P3, P3→approval).
 
-## HINT comparison (future)
+## HINT comparison (best HINT, apples-to-apples)
 
-Not built yet, but the structure is ready. Trial-granularity `predictions.csv`
-is keyed on `nct_id` + `trial_phase`, so a future `compare_hint.py` can
-inner-join the local predictions against a HINT model's per-NCT output (from a
-sibling HINT repo) and group by phase — the same join the old pipeline used.
+Retrain the **best-performing HINT** (its three per-phase `HINTModel`s) on the
+**exact same rows + split** as this repo, **eligibility-less** (no criteria — feature
+parity, since this model has no criteria feature), and compare per-phase on the
+shared test set. A single exported CSV is the contract; the sibling HINT repo
+(`../hint_standalone/repo`) does the training.
+
+```bash
+# 1. Train your model (trial granularity) — predictions.csv keyed on nct_id+phase.
+uv run python -m dsm train --granularity trial --time-split-year 2019 --output runs/t2019
+
+# 2. Export the HINT-format CSV (10 cols + a train/test split tag from the SAME cutoff).
+#    Only HINT-ingestible rows are emitted (valid SMILES + non-empty ICD-10); criteria blanked.
+uv run python -m dsm export-hint --time-split-year 2019 --output runs/hint/hint_export.csv
+
+# 3. In the HINT repo, retrain the 3 per-phase models on the export (NOT benchmark weights).
+cd ../hint_standalone/repo
+bash runs/dsm_best/run.sh /abs/path/to/drug-success-lite/runs/hint/hint_export.csv   # EPOCHS=5 default
+#   -> runs/dsm_best/results/nctid2predict.pkl   (merged per-NCT test predictions)
+
+# 4. Compare on the shared test nct_ids (inner-join), per-phase + overall.
+cd -
+uv run python -m dsm compare-hint \
+  --predictions runs/t2019/trial/predictions.csv \
+  --hint-predictions ../hint_standalone/repo/runs/dsm_best/results/nctid2predict.pkl \
+  --output runs/hint/comparison.csv
+```
+
+**Why the comparison set is smaller than the full test set:** this model tolerates
+missing features (every encoder has a `_missing` indicator), but HINT *requires* a
+parseable SMILES and a non-empty ICD-10 list, and only models Phase 1/2/3.
+`export-hint` reports exactly how many rows that drops (empty ICD codes dominate),
+and `compare-hint` evaluates *both* models only on the shared `nct_id`s so neither is
+scored on rows the other never saw. The split tag is driven off your
+`--time-split-year`, so HINT trains/tests on your partition, not its native 2014
+benchmark split.
+
+`EPOCHS` defaults to 5. HINT keeps the best-validation checkpoint and validation loss
+bottoms around epoch ~3 (then overfits), so 5 is plenty — more epochs don't change the
+saved model. The benchmark `phase_*.ckpt` weights are never reused; this trains fresh
+on your data.

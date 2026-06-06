@@ -122,6 +122,43 @@ def cmd_train(args) -> None:
     print(f"\nwrote summary -> {summary_path}")
 
 
+def cmd_export_hint(args) -> None:
+    from .hint_export import write_hint_csv
+
+    time_col = "trial_start_date" if args.granularity == "trial" else "earliest_start_date"
+    config = ModelingConfig(
+        training_granularity=args.granularity,
+        test_size=args.test_size,
+        seed=args.seed,
+        time_split_column=time_col,
+        time_split_year=args.time_split_year,
+    )
+    frame = write_hint_csv(config, Path(args.output))
+    n_train = int((frame["split"] == "train").sum())
+    n_test = int((frame["split"] == "test").sum())
+    print(
+        f"wrote {len(frame)} rows -> {args.output}  "
+        f"(train={n_train}, test={n_test}, criteria=blanked)"
+    )
+
+
+def cmd_compare_hint(args) -> None:
+    from .compare_hint import compare, print_comparison
+
+    df = compare(
+        Path(args.predictions),
+        Path(args.hint_predictions),
+        bootstrap_ci=args.bootstrap_ci,
+        seed=args.seed,
+    )
+    print()
+    print_comparison(df)
+    if args.output:
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(args.output, index=False)
+        print(f"\nwrote comparison -> {args.output}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="dsm", description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -147,6 +184,29 @@ def build_parser() -> argparse.ArgumentParser:
                    help="train one model per built-in group set instead of a single run")
     t.add_argument("--output", default="runs/latest")
     t.set_defaults(func=cmd_train)
+
+    # export-hint: write a HINT-format CSV (10 cols + split) for the sibling HINT repo.
+    e = sub.add_parser("export-hint", help="export a HINT-format CSV with a train/test split tag")
+    e.add_argument("--granularity", choices=["trial", "drug_indication"], default="trial",
+                   help="trial = phase-transition; drug_indication = end-to-end approval (LOA)")
+    e.add_argument("--time-split-year", type=int, default=2019,
+                   help="temporal cutoff; MUST match the train run you compare against")
+    e.add_argument("--test-size", type=float, default=0.2,
+                   help="used only if --time-split-year is omitted (random split)")
+    e.add_argument("--seed", type=int, default=0)
+    e.add_argument("--output", default="runs/hint/hint_export.csv")
+    e.set_defaults(func=cmd_export_hint)
+
+    # compare-hint: join this repo's predictions with HINT's on the shared test nct_ids.
+    c = sub.add_parser("compare-hint", help="compare model vs HINT per-phase on the shared test set")
+    c.add_argument("--predictions", default="runs/t2019/trial/predictions.csv",
+                   help="this repo's trial-granularity predictions.csv")
+    c.add_argument("--hint-predictions", required=True,
+                   help="HINT per-NCT predictions: a CSV (nctid,y_proba) or results/nctid2predict.pkl")
+    c.add_argument("--bootstrap-ci", type=int, default=0)
+    c.add_argument("--seed", type=int, default=0)
+    c.add_argument("--output", default="runs/hint/comparison.csv")
+    c.set_defaults(func=cmd_compare_hint)
     return p
 
 
