@@ -112,6 +112,43 @@ def metrics(
     return out
 
 
+def evaluate_predictions(
+    predictions,
+    *,
+    bootstrap_ci: int = 0,
+    seed: int = 0,
+    min_phase_n: int = 20,
+) -> dict:
+    """Score a canonical predictions parquet (or DataFrame) -> metrics dict.
+
+    Reads `example_id, label, phase, y_proba`, computes overall metrics, and
+    per-phase metrics grouped by the (already-normalized) `phase` column. This is
+    the single evaluator both model families flow through.
+    """
+    import pandas as pd
+
+    df = predictions if isinstance(predictions, pd.DataFrame) else pd.read_parquet(predictions)
+    label = df["label"].to_numpy()
+    proba = df["y_proba"].to_numpy()
+    overall = metrics(label, proba, bootstrap_ci=bootstrap_ci, ci_seed=seed)
+
+    per_phase: dict = {}
+    for phase_value, g in df.groupby("phase"):
+        if len(g) < min_phase_n or g["label"].nunique() < 2:
+            per_phase[str(phase_value)] = {"n": int(len(g)), "n_pos": int(g["label"].sum())}
+            continue
+        per_phase[str(phase_value)] = metrics(
+            g["label"].to_numpy(), g["y_proba"].to_numpy(),
+            bootstrap_ci=bootstrap_ci, ci_seed=seed,
+        )
+    return {
+        "n": int(len(df)),
+        "n_pos": int(df["label"].sum()),
+        "overall": overall,
+        "per_phase": per_phase,
+    }
+
+
 def metrics_by_phase(
     y_true,
     y_proba,

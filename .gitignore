@@ -1,5 +1,14 @@
-# Immutable dataset — copied in via setup_inputs.sh, never committed.
-inputs/
+# Data — our parquets + HINT benchmark (symlink) + materialized canonical
+# datasets. Large / immutable / regenerable; never committed.
+data/
+
+# Pulled-in HINT subtree: code is tracked, big artifacts are not.
+hint/.venv/
+hint/data/*.pkl
+hint/data/*.csv
+hint/save_model/*.ckpt
+hint/results/
+hint/figure/
 
 # Run outputs.
 runs/

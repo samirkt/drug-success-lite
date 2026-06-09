@@ -1,0 +1,8 @@
+*.ckpt
+*.pkl
+*.csv
+*.jpg
+*.png
+*.pyc
+*.txt
+*.log

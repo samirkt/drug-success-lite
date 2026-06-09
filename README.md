@@ -1,117 +1,90 @@
 # drug-success-lite
 
-A stripped-down, bare-bones phase-transition success model. It does exactly one
-thing: **load candidate + trial data → train a model → output metrics.** No
-ablation, RFE, PDF reports, web serving, calibration, or dimensionality
-reduction — just the data, the five feature groups, a model, and the numbers.
-
-Extracted from `drug-success-model` to make experimentation cheap and fast.
-
-## The dataset is an immutable input
-
-The four parquets live under `inputs/` (gitignored) and are treated as
-**read-only**: nothing in `dsm/` ever writes to `inputs/`. Populate them once:
+A small research repo for clinical-trial / drug-approval success modeling. One
+entry point, one data location, one standardized metrics format — for **both** our
+XGBoost-style models and the **HINT** deep model (pulled in under `hint/`).
 
 ```bash
-./setup_inputs.sh                 # copies from ../drug-success-model/inputs
-./setup_inputs.sh /path/to/inputs # or point at any snapshot
+uv run python -m dsm list                  # datasets + experiments
+uv run python -m dsm run xgb_di_2019        # -> runs/xgb_di_2019/metrics.json
+uv run python -m dsm run hint_bench_p1_repro --epochs 5
+uv run python -m dsm run --all
 ```
 
-Expected layout:
+To add an experiment, add one line to `dsm/experiments.py` — no new code.
+
+## How it fits together
 
 ```
-inputs/
-  candidate_detail.parquet
-  trial_detail.parquet
-  features/fingerprints.parquet
-  features/molformer_embeddings.parquet
+data/                         ONE ground-truth data location
+  candidate_detail.parquet  trial_detail.parquet  features/*.parquet   (our data)
+  hint_benchmark/  ->  ../hint/data        (symlink; HINT's TOP benchmark CSVs)
+  datasets/<name>.parquet                  canonical example files (built on demand)
+
+dsm/                          our package (sklearn / xgboost, py3.11, numpy>=2)
+  datasets.py    the SINGLE materializer -> canonical example parquet
+  models/        adapters: sklearn_adapter (xgb/logreg, in-process) + hint_adapter (subprocess)
+  experiments.py declarative dataset + experiment registry
+  run.py         resolve experiment -> materialize -> adapter -> evaluate -> metrics.json
+  evaluate.py    canonical predictions parquet -> metrics (overall + per-phase)
+  features.py / encoders.py / dataset.py / splits.py / model.py / config.py
+
+hint/                         pulled-in HINT (torch, py3.10, numpy<2 — its OWN uv venv)
+  run_experiment.py           the single HINT entry: canonical in -> predictions out
+  HINT/ ...                   encoders + model, reused unchanged
 ```
 
-## Install & run
+`dsm` and `hint` live in **incompatible Python environments**, so the only thing
+that crosses between them is a parquet file. `dsm/models/hint_adapter.py` shells
+`uv run --project hint python run_experiment.py ...`.
+
+## The dsm ↔ HINT contract (two files, defined once)
+
+Every modeling decision (label, train/test split, ICD format, criteria, row
+filtering, phase naming) is made **once**, in `dsm/datasets.py`. Both model
+families then consume one schema and emit another:
+
+**Canonical example** — `data/datasets/<name>.parquet`:
+`example_id, label, phase, smiles (list), icd_codes (flat list), criteria, split`
+(+ rich admet/target/pathway columns for our data; absent for the benchmark).
+
+**Canonical predictions** — `runs/<exp>/predictions.parquet`:
+`example_id, label, phase, y_proba`. One evaluator turns this into
+`runs/<exp>/metrics.json`. Comparing two models = run two experiments on the same
+dataset and read two `metrics.json` (no bespoke join).
+
+The molecule feature is **always** ECFP4+MACCS from the canonical `smiles`, and
+the benchmark/our-data disease feature is the same `icd_codes` HINT's GRAM sees —
+so xgb and HINT consume identical molecule+disease inputs on any shared dataset.
+The flat-ICD → HINT's nested list-of-lists string is the *only* conversion, and it
+lives in one function (`hint/run_experiment.py:to_hint_cells`), guarded by a
+round-trip test.
+
+## Data setup (immutable inputs)
+
+Our parquets and HINT's benchmark are large, gitignored, and regenerable. Our four
+parquets live under `data/`; HINT ships its TOP benchmark + assets under
+`hint/data/` (exposed at `data/hint_benchmark/` via symlink so the native HINT
+scripts' cwd-relative paths still resolve). `hint/data/sentence2embedding.pkl`
+(1.1 GB) is needed only for the criteria-on reproduction path; the criteria-less
+path uses the tiny `sentence2embedding_stub.pkl` automatically.
 
 ```bash
-uv sync
+uv sync                       # dsm venv
+uv sync --project hint        # HINT venv (torch, rdkit, numpy<2)
+```
 
-# One model, all five feature groups, temporal split at 2019:
-uv run python -m dsm train --granularity trial --time-split-year 2019 --output runs/t2019
+## Experiments
 
-# Drug-indication granularity:
-uv run python -m dsm train --granularity drug_indication --time-split-year 2019 --output runs/di2019
+- **our data**: `xgb_di_2019` (all 5 groups), `xgb_di_md` (molecule+disease),
+  `hint_di_2019` (HINT on the same rows).
+- **benchmark comparison** (canonical, identical population): `xgb_bench_p{1,2,3}`
+  vs `hint_bench_p{1,2,3}` — apples-to-apples on smiles+icd.
+- **benchmark reproduction** (HINT native path, real 3-way split + real criteria):
+  `hint_bench_p{1,2,3}_repro` — reproduces the published per-phase numbers.
 
-# Pick specific groups (honored, unlike the old repo):
-uv run python -m dsm train --groups molecule disease admet --output runs/mda
-
-# Reproduce the old group-set sweep (one model per set):
-uv run python -m dsm train --granularity both --sweep --time-split-year 2019 --output runs/sweep
-
+```bash
 uv run pytest tests/ -q
 ```
 
-Outputs land under `runs/<name>/<granularity>/`:
-`metrics.json`, `predictions.csv`, `feature_importances.csv`, plus a top-level
-`metrics.csv` summarizing every run.
-
-## Layout
-
-```
-dsm/
-  config.py     # ModelingConfig / LabelConfig / FeatureConfig dataclasses
-  dataset.py    # read-only parquet loaders + join + label  (immutable input)
-  splits.py     # temporal or stratified-random train/test split
-  encoders.py   # six generic sub-encoders (Scalar, MultiHot, DenseArray, ...)
-  features.py   # five composite feature groups + registry
-  model.py      # xgb + logreg wrappers behind a tiny registry
-  evaluate.py   # metrics() + per-phase metrics + optional bootstrap CIs
-  train.py      # train_one_run() + run-artifact writer
-  cli.py        # `python -m dsm train ...`
-```
-
-## Granularities
-
-- `drug_indication` — one row per candidate; label from `candidate.outcome`
-  (Approved/Commercialized = 1, Failed Phase 1/2/3 = 0; Ongoing dropped).
-- `trial` — one row per NCT; label from `trial_inferred_label`. Produces
-  per-phase metrics (P1→P2, P2→P3, P3→approval).
-
-## HINT comparison (best HINT, apples-to-apples)
-
-Retrain the **best-performing HINT** (its three per-phase `HINTModel`s) on the
-**exact same rows + split** as this repo, **eligibility-less** (no criteria — feature
-parity, since this model has no criteria feature), and compare per-phase on the
-shared test set. A single exported CSV is the contract; the sibling HINT repo
-(`../hint_standalone/repo`) does the training.
-
-```bash
-# 1. Train your model (trial granularity) — predictions.csv keyed on nct_id+phase.
-uv run python -m dsm train --granularity trial --time-split-year 2019 --output runs/t2019
-
-# 2. Export the HINT-format CSV (10 cols + a train/test split tag from the SAME cutoff).
-#    Only HINT-ingestible rows are emitted (valid SMILES + non-empty ICD-10); criteria blanked.
-uv run python -m dsm export-hint --time-split-year 2019 --output runs/hint/hint_export.csv
-
-# 3. In the HINT repo, retrain the 3 per-phase models on the export (NOT benchmark weights).
-cd ../hint_standalone/repo
-bash runs/dsm_best/run.sh /abs/path/to/drug-success-lite/runs/hint/hint_export.csv   # EPOCHS=5 default
-#   -> runs/dsm_best/results/nctid2predict.pkl   (merged per-NCT test predictions)
-
-# 4. Compare on the shared test nct_ids (inner-join), per-phase + overall.
-cd -
-uv run python -m dsm compare-hint \
-  --predictions runs/t2019/trial/predictions.csv \
-  --hint-predictions ../hint_standalone/repo/runs/dsm_best/results/nctid2predict.pkl \
-  --output runs/hint/comparison.csv
-```
-
-**Why the comparison set is smaller than the full test set:** this model tolerates
-missing features (every encoder has a `_missing` indicator), but HINT *requires* a
-parseable SMILES and a non-empty ICD-10 list, and only models Phase 1/2/3.
-`export-hint` reports exactly how many rows that drops (empty ICD codes dominate),
-and `compare-hint` evaluates *both* models only on the shared `nct_id`s so neither is
-scored on rows the other never saw. The split tag is driven off your
-`--time-split-year`, so HINT trains/tests on your partition, not its native 2014
-benchmark split.
-
-`EPOCHS` defaults to 5. HINT keeps the best-validation checkpoint and validation loss
-bottoms around epoch ~3 (then overfits), so 5 is plenty — more epochs don't change the
-saved model. The benchmark `phase_*.ckpt` weights are never reused; this trains fresh
-on your data.
+Metric to compare across datasets: **ROC-AUC** (PR-AUC/F1 move with base rate).

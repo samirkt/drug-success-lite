@@ -13,10 +13,16 @@ from typing import Optional
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CANDIDATE_DETAIL = PROJECT_ROOT / "inputs" / "candidate_detail.parquet"
-DEFAULT_TRIAL_DETAIL = PROJECT_ROOT / "inputs" / "trial_detail.parquet"
-DEFAULT_FINGERPRINTS = PROJECT_ROOT / "inputs" / "features" / "fingerprints.parquet"
-DEFAULT_EMBEDDINGS = PROJECT_ROOT / "inputs" / "features" / "molformer_embeddings.parquet"
+DATA_ROOT = PROJECT_ROOT / "data"
+DEFAULT_CANDIDATE_DETAIL = DATA_ROOT / "candidate_detail.parquet"
+DEFAULT_TRIAL_DETAIL = DATA_ROOT / "trial_detail.parquet"
+DEFAULT_FINGERPRINTS = DATA_ROOT / "features" / "fingerprints.parquet"
+DEFAULT_EMBEDDINGS = DATA_ROOT / "features" / "molformer_embeddings.parquet"
+
+# Canonical example datasets (materialized by dsm/datasets.py) + the HINT
+# TOP benchmark (a symlink to hint/data, where HINT's native scripts read it).
+DATASETS_DIR = DATA_ROOT / "datasets"
+HINT_BENCHMARK_DIR = DATA_ROOT / "hint_benchmark"
 
 # The five top-level composite feature groups (see `features.py`).
 ALL_FEATURE_GROUPS: tuple[str, ...] = (

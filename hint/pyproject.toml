@@ -1,0 +1,21 @@
+[project]
+name = "hint"
+version = "0.1.0"
+description = "HINT: Hierarchical Interaction Network for Clinical Trial Outcome Prediction (uv-managed)"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "torch>=2.2",
+    "numpy>=1.26,<2.0",
+    "pandas>=2.0",
+    "scikit-learn>=1.3",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "tqdm>=4.66",
+    "pyarrow>=14.0",
+    "rdkit>=2023.9.5",
+    "icd10-cm>=0.0.5",
+    "requests>=2.31",
+    "ipykernel>=7.2.0",
+    "nbconvert>=7.17.1",
+    "nbclient>=0.10.4",
+]
