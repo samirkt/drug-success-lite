@@ -5,6 +5,8 @@
     python -m dsm run xgb_di_2019            # run one experiment -> runs/<name>/metrics.json
     python -m dsm run hint_bench_p1_repro --epochs 5
     python -m dsm run --all                  # run every experiment
+    python -m dsm results                    # table of all metrics.json
+    python -m dsm stratify                    # seen vs unseen drug breakdown
 
 Every experiment writes runs/<name>/{predictions.parquet, metrics.json} in one
 standardized format, whether the model is xgb/logreg (in-process) or HINT (shelled
@@ -16,6 +18,7 @@ from __future__ import annotations
 import argparse
 import logging
 
+from . import stratify as stratify_mod
 from .experiments import DATASETS, EXPERIMENTS
 from .run import collect_results, materialize_dataset, run_experiment
 
@@ -73,12 +76,28 @@ def cmd_results(args) -> None:
         print("  ".join(f[c].ljust(w[c]) for c in cols))
 
 
+def cmd_stratify(args) -> None:
+    names = None if args.experiment is None else [args.experiment]
+    records = stratify_mod.stratify_all(names)
+    if not records:
+        print("no predictions found — run an experiment first (see `dsm list`).")
+        return
+    stratify_mod.print_table(records)
+    summary = stratify_mod.RUNS_DIR / "stratified_summary.csv"
+    stratify_mod.summary_frame(records).to_csv(summary, index=False)
+    print(f"\nwrote {summary}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="dsm", description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("list", help="list datasets and experiments").set_defaults(func=cmd_list)
     sub.add_parser("results", help="table of all runs/*/metrics.json").set_defaults(func=cmd_results)
+
+    s = sub.add_parser("stratify", help="seen vs unseen drug breakdown of saved predictions")
+    s.add_argument("experiment", nargs="?", help="one experiment, or omit for all (see `dsm list`)")
+    s.set_defaults(func=cmd_stratify)
 
     m = sub.add_parser("materialize", help="build a canonical example parquet")
     m.add_argument("dataset", help="dataset name (see `dsm list`)")
