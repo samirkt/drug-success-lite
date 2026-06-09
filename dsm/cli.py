@@ -7,6 +7,7 @@
     python -m dsm run --all                  # run every experiment
     python -m dsm results                    # table of all metrics.json
     python -m dsm stratify                    # seen vs unseen drug breakdown
+    python -m dsm ablation                    # single-group feature ablation
 
 Every experiment writes runs/<name>/{predictions.parquet, metrics.json} in one
 standardized format, whether the model is xgb/logreg (in-process) or HINT (shelled
@@ -18,6 +19,7 @@ from __future__ import annotations
 import argparse
 import logging
 
+from . import ablation as ablation_mod
 from . import stratify as stratify_mod
 from .experiments import DATASETS, EXPERIMENTS
 from .run import collect_results, materialize_dataset, run_experiment
@@ -88,6 +90,18 @@ def cmd_stratify(args) -> None:
     print(f"\nwrote {summary}")
 
 
+def cmd_ablation(args) -> None:
+    records = ablation_mod.run_ablation(force=args.force)
+    if not records:
+        print("no ablation results produced.")
+        return
+    df = ablation_mod.summary_frame(records)
+    ablation_mod.print_ablation(df)
+    summary = stratify_mod.RUNS_DIR / "ablation_summary.csv"
+    df.to_csv(summary, index=False)
+    print(f"\nwrote {summary}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="dsm", description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -98,6 +112,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("stratify", help="seen vs unseen drug breakdown of saved predictions")
     s.add_argument("experiment", nargs="?", help="one experiment, or omit for all (see `dsm list`)")
     s.set_defaults(func=cmd_stratify)
+
+    a = sub.add_parser("ablation", help="single-group feature ablation (xgb/ours_di) on seen vs unseen")
+    a.add_argument("--force", action="store_true", help="retrain variants even if predictions exist")
+    a.set_defaults(func=cmd_ablation)
 
     m = sub.add_parser("materialize", help="build a canonical example parquet")
     m.add_argument("dataset", help="dataset name (see `dsm list`)")

@@ -74,4 +74,8 @@ EXPERIMENTS: dict[str, ExperimentSpec] = {s.name: s for s in [
     _e("hint_bench_p1_repro", "hint", ("mol", "disease", "criteria"), native_benchmark="phase_I"),
     _e("hint_bench_p2_repro", "hint", ("mol", "disease", "criteria"), native_benchmark="phase_II"),
     _e("hint_bench_p3_repro", "hint", ("mol", "disease", "criteria"), native_benchmark="phase_III"),
+
+    # --- single-group ablation of the headline model (xgb on ours_di) ---
+    # baseline = xgb_di_2019 (all groups); see dsm/ablation.py.
+    *[_e(f"abl_{g}", "xgb", (g,), dataset="ours_di") for g in ALL_GROUPS],
 ]}
