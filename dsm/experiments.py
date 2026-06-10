@@ -61,6 +61,8 @@ EXPERIMENTS: dict[str, ExperimentSpec] = {s.name: s for s in [
     _e("xgb_di_2019", "xgb", ALL_GROUPS, dataset="ours_di"),
     _e("xgb_di_md", "xgb", ("molecule", "disease"), dataset="ours_di"),
     _e("hint_di_2019", "hint", ("mol", "disease"), dataset="ours_di"),
+    # ChemAP (pretrained black box, SMILES-only) on the aligned approval target.
+    _e("chemap_di_2019", "chemap", ("mol",), dataset="ours_di"),
 
     # --- benchmark, canonical comparison (identical population & inputs) ---
     _e("xgb_bench_p1", "xgb", ("molecule", "disease"), dataset="hint_p1"),

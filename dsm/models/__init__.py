@@ -13,13 +13,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from . import hint_adapter, sklearn_adapter
+from . import chemap_adapter, hint_adapter, sklearn_adapter
 
 # model family -> runner
 ADAPTERS: dict[str, Callable[..., Path]] = {
     "xgb": sklearn_adapter.run,
     "logreg": sklearn_adapter.run,
     "hint": hint_adapter.run,
+    "chemap": chemap_adapter.run,
 }
 
 

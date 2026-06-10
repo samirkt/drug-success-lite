@@ -10,6 +10,12 @@ hint/save_model/*.ckpt
 hint/results/
 hint/figure/
 
+# Pulled-in ChemAP subtree: code is tracked, venv / checkpoints / big data are not.
+chemap/.venv*/
+chemap/model/**/*.pt
+chemap/candidate_detail.parquet
+chemap/results/
+
 # Run outputs.
 runs/
 

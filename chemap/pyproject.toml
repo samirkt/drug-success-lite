@@ -1,0 +1,16 @@
+[project]
+name = "chemap"
+version = "0.1.0"
+description = "ChemAP: chemical-structure-based drug-approval prediction (uv-managed, vendored for dsm)"
+requires-python = ">=3.10,<3.11"
+# Inference-only deps. ChemAP's released checkpoints are state_dicts, so modern torch loads
+# them fine. torch_geometric is NOT needed: only ChemAP.py imports it; our run_experiment.py
+# uses torch.utils.data.DataLoader. README's original pins (py3.7/torch1.10) are historical.
+dependencies = [
+    "torch>=2.2",
+    "numpy>=1.26,<2.0",
+    "pandas>=2.0",
+    "scikit-learn>=1.3",
+    "rdkit>=2023.9.5",
+    "pyarrow>=14.0",
+]
