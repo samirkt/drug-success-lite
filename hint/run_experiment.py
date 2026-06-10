@@ -132,6 +132,38 @@ def make_loader(rows, shuffle, batch_size=32):
     return data.DataLoader(ds, batch_size=batch_size, shuffle=shuffle, collate_fn=trial_collate_fn)
 
 
+def dump_embeddings(model, named_loaders, phase_by_id, path):
+    """Dump HINT's trained pre-classifier representation: 50-d MPNN + 50-d GRAM = 100-d,
+    for every split. One parquet row per example: example_id,label,phase,split,emb_0..emb_99.
+    Iterates each loader exactly as Interaction.generate_predict does; the embeddings reflect
+    the model's final trained weights (what HINT itself predicts from)."""
+    import pandas as pd
+    import torch
+
+    model.eval()
+    rows = []
+    with torch.no_grad():
+        for split_name, loader in named_loaders:
+            for nctid_lst, label_vec, smiles_lst2, icdcode_lst3, criteria_lst in loader:
+                mol_embed, icd_embed, _ = model.forward_get_three_encoders(
+                    smiles_lst2, icdcode_lst3, criteria_lst)
+                emb = torch.cat([mol_embed, icd_embed], 1).cpu().numpy()
+                for i, nctid in enumerate(nctid_lst):
+                    row = {
+                        "example_id": str(nctid),
+                        "label": int(label_vec[i].item()),
+                        "phase": phase_by_id.get(str(nctid), "other"),
+                        "split": split_name,
+                    }
+                    row.update({f"emb_{j}": float(emb[i, j]) for j in range(emb.shape[1])})
+                    rows.append(row)
+    model.train()
+    df = pd.DataFrame(rows)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    df.to_parquet(path, index=False)
+    print(f"[hint] wrote {len(df)} embeddings ({df.shape[1] - 4}-d) -> {path}", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     src = ap.add_mutually_exclusive_group(required=True)
@@ -144,6 +176,8 @@ def main():
     ap.add_argument("--valid-frac", type=float, default=0.1)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--device", default="cpu")
+    ap.add_argument("--dump-embeddings", default=None,
+                    help="also write HINT's trained 100-d (MPNN+GRAM) vectors for all splits here")
     args = ap.parse_args()
 
     global VALID_FRAC, SEED
@@ -207,6 +241,12 @@ def main():
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     preds.to_parquet(args.out, index=False)
     print(f"[hint] wrote {len(preds)} predictions -> {args.out}", flush=True)
+
+    if args.dump_embeddings:
+        phase_by_id_all = {r["example_id"]: r["phase"]
+                           for r in (*train_rows, *valid_rows, *test_rows)}
+        named_loaders = [("train", train_loader), ("valid", valid_loader), ("test", test_loader)]
+        dump_embeddings(model, named_loaders, phase_by_id_all, args.dump_embeddings)
 
 
 if __name__ == "__main__":
