@@ -57,25 +57,58 @@ def cmd_run(args) -> None:
               f"F1={o['f1']:.4f} (n={payload['n']})")
 
 
+# dataset -> display group, in print order. Anything unmatched falls in "Other".
+_RESULT_GROUPS = ["HINT benchmark", "Drug-indication (ours_di)", "Trial (ours_trial)", "Other"]
+
+
+def _result_group(dataset: str) -> str:
+    d = dataset or ""
+    if d.startswith("hint_p") or d.startswith("native:phase"):
+        return "HINT benchmark"
+    if d == "ours_di":
+        return "Drug-indication (ours_di)"
+    if d == "ours_trial":
+        return "Trial (ours_trial)"
+    return "Other"
+
+
 def cmd_results(args) -> None:
     rows = collect_results()
     if not rows:
         print("no results yet — run an experiment first (see `dsm list`).")
         return
     cols = ["experiment", "model", "dataset", "n", "n_pos", "roc_auc", "pr_auc", "f1"]
-    fmt = []
-    for r in rows:
-        fr = {}
+
+    def fmt_row(r: dict) -> dict:
+        out = {}
         for c in cols:
             v = r.get(c)
-            fr[c] = (f"{v:.4f}" if isinstance(v, float) and v == v
-                     else ("" if v is None else str(v)))
-        fmt.append(fr)
-    w = {c: max(len(c), *(len(f[c]) for f in fmt)) for c in cols}
-    print("  ".join(c.ljust(w[c]) for c in cols))
-    print("  ".join("-" * w[c] for c in cols))
-    for f in fmt:
-        print("  ".join(f[c].ljust(w[c]) for c in cols))
+            out[c] = (f"{v:.4f}" if isinstance(v, float) and v == v
+                      else ("" if v is None else str(v)))
+        return out
+
+    # Global column widths so the per-dataset tables line up with each other.
+    fmt_all = [fmt_row(r) for r in rows]
+    w = {c: max(len(c), *(len(f[c]) for f in fmt_all)) for c in cols}
+
+    grouped: dict[str, list[dict]] = {}
+    for r in rows:
+        grouped.setdefault(_result_group(r["dataset"]), []).append(r)
+
+    first = True
+    for group in _RESULT_GROUPS:
+        group_rows = grouped.get(group)
+        if not group_rows:
+            continue
+        if not first:
+            print()
+        print(f"=== {group} ===")
+        print("  ".join(c.ljust(w[c]) for c in cols))
+        print("  ".join("-" * w[c] for c in cols))
+        for r in sorted(group_rows, key=lambda r: (-(r.get("roc_auc") or 0.0), r.get("experiment", ""))):
+            fr = fmt_row(r)
+            print("  ".join(fr[c].ljust(w[c]) for c in cols))
+        first = False
 
 
 def cmd_stratify(args) -> None:

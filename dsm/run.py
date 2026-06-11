@@ -70,7 +70,8 @@ def run_experiment(
 
 
 def collect_results(output_root: Optional[Path] = None) -> list[dict]:
-    """Scan runs/*/metrics.json into flat rows (overall metrics per experiment)."""
+    """Scan runs/*/metrics.json into flat rows (overall metrics per experiment), then fold in the
+    embed_swap models, which aren't registered experiments and so have no metrics.json."""
     root = Path(output_root or RUNS_DIR)
     rows: list[dict] = []
     for mj in sorted(root.glob("*/metrics.json")):
@@ -90,7 +91,50 @@ def collect_results(output_root: Optional[Path] = None) -> list[dict]:
             "pr_auc": o.get("pr_auc"),
             "f1": o.get("f1"),
         })
+    rows.extend(_embed_swap_rows(root))
     return rows
+
+
+# embed_swap target -> the dataset it ran on.
+_EMBED_SWAP_DATASET = {"p1": "hint_p1", "p2": "hint_p2", "p3": "hint_p3", "di": "ours_di"}
+
+
+def _embed_swap_rows(root: Path) -> list[dict]:
+    """Rows for the embed_swap-specific models (xgb_hint_emb, xgb_pca50) from
+    runs/embed_swap_summary.csv. The hint/xgb_full baselines there are already covered by their
+    registered experiments, so only these two are added. Uses the 'all' stratum (= overall)."""
+    import csv
+
+    path = root / "embed_swap_summary.csv"
+    if not path.exists():
+        return []
+
+    def num(v, cast):
+        try:
+            return cast(float(v))
+        except (TypeError, ValueError):
+            return None
+
+    out: list[dict] = []
+    try:
+        with open(path, newline="") as f:
+            for r in csv.DictReader(f):
+                if r.get("stratum") != "all" or r.get("model") not in ("xgb_hint_emb", "xgb_pca50"):
+                    continue
+                target = r.get("target", "")
+                out.append({
+                    "experiment": f"{r['model']}_{target}",
+                    "model": r["model"],
+                    "dataset": _EMBED_SWAP_DATASET.get(target, target),
+                    "n": num(r.get("n"), int),
+                    "n_pos": num(r.get("n_pos"), int),
+                    "roc_auc": num(r.get("roc_auc"), float),
+                    "pr_auc": num(r.get("pr_auc"), float),
+                    "f1": num(r.get("f1"), float),
+                })
+    except (OSError, KeyError, csv.Error):
+        return []
+    return out
 
 
 def materialize_dataset(name: str, *, force: bool = False) -> Path:
