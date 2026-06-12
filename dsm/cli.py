@@ -20,6 +20,7 @@ import argparse
 import logging
 
 from . import ablation as ablation_mod
+from . import plots as plots_mod
 from . import stratify as stratify_mod
 from .experiments import DATASETS, EXPERIMENTS
 from .run import collect_results, materialize_dataset, reeval_all, run_experiment
@@ -124,6 +125,10 @@ def cmd_results(args) -> None:
         print("  ".join("-" * w[c] for c in cols))
         for fr in fmt_all:
             print("  ".join(fr[c].ljust(w[c]) for c in cols))
+        p = plots_mod.plot_results(rows, stratify_mod.RUNS_DIR / "results_first_class.png",
+                                   title="First-class results — ROC-AUC")
+        if p:
+            print(f"\nwrote {p}")
         return
 
     # Global column widths so the per-dataset tables line up with each other.
@@ -135,6 +140,7 @@ def cmd_results(args) -> None:
         grouped.setdefault(_result_group(r["dataset"]), []).append(r)
 
     first = True
+    ordered: list[dict] = []
     for group in _RESULT_GROUPS:
         group_rows = grouped.get(group)
         if not group_rows:
@@ -147,7 +153,12 @@ def cmd_results(args) -> None:
         for r in sorted(group_rows, key=lambda r: (-(r.get("roc_auc") or 0.0), r.get("experiment", ""))):
             fr = fmt_row(r)
             print("  ".join(fr[c].ljust(w[c]) for c in cols))
+            ordered.append(r)
         first = False
+
+    p = plots_mod.plot_results(ordered, stratify_mod.RUNS_DIR / "results.png")
+    if p:
+        print(f"\nwrote {p}")
 
 
 def cmd_stratify(args) -> None:
@@ -165,10 +176,14 @@ def cmd_stratify(args) -> None:
         print("no predictions found — run an experiment first (see `dsm list`).")
         return
     stratify_mod.print_table(records)
+    suffix = "_first_class" if args.first_class else ""
+    p = plots_mod.plot_stratify(records, stratify_mod.RUNS_DIR / f"stratified{suffix}.png")
+    if p:
+        print(f"wrote {p}")
     if not args.first_class:
         summary = stratify_mod.RUNS_DIR / "stratified_summary.csv"
         stratify_mod.summary_frame(records).to_csv(summary, index=False)
-        print(f"\nwrote {summary}")
+        print(f"wrote {summary}")
 
 
 def cmd_reeval(args) -> None:
