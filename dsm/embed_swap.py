@@ -150,7 +150,8 @@ def _xgb_pca(canonical_path, groups=("molecule", "disease")) -> pd.DataFrame:
 # --------------------------------------------------------------------------- #
 # Orchestration
 # --------------------------------------------------------------------------- #
-def _stratify_preds(model_name: str, target: str, preds: pd.DataFrame, seen_by_id: dict) -> dict:
+def _stratify_preds(model_name: str, target: str, preds: pd.DataFrame, seen_by_id: dict,
+                    bootstrap_ci: int = 0) -> dict:
     p = preds.copy()
     p["seen"] = p["example_id"].astype(str).map(seen_by_id)
     n_unmatched = int(p["seen"].isna().sum())
@@ -159,11 +160,12 @@ def _stratify_preds(model_name: str, target: str, preds: pd.DataFrame, seen_by_i
         p = p.dropna(subset=["seen"])
     rec = {"model": model_name, "target": target}
     for stratum, sub in (("all", p), ("seen", p[p["seen"]]), ("unseen", p[~p["seen"]])):
-        rec[stratum] = strat.strat_metrics(sub["label"], sub["y_proba"])
+        rec[stratum] = strat.strat_metrics(sub["label"], sub["y_proba"], bootstrap_ci=bootstrap_ci)
     return rec
 
 
-def run_embed_swap(targets: list[str] | None = None, force: bool = False) -> list[dict]:
+def run_embed_swap(targets: list[str] | None = None, force: bool = False,
+                   bootstrap_ci: int = 1000) -> list[dict]:
     targets = targets if targets else list(TARGETS)
     records: list[dict] = []
     for target in targets:
@@ -203,7 +205,8 @@ def run_embed_swap(targets: list[str] | None = None, force: bool = False) -> lis
             "xgb_pca50": pca_pred_df,
         }
         for model_name in MODELS:
-            records.append(_stratify_preds(model_name, target, preds_by_model[model_name], seen_by_id))
+            records.append(_stratify_preds(model_name, target, preds_by_model[model_name],
+                                           seen_by_id, bootstrap_ci))
 
         # 5. di only: mdtp variants (add target+pathway as PCA-50 blocks to each, so the only
         # difference between them stays the mol+disease representation — HINT-emb vs PCA).
@@ -214,9 +217,41 @@ def run_embed_swap(targets: list[str] | None = None, force: bool = False) -> lis
             emb_mdtp.to_parquet(out_dir / "xgb_hint_emb_mdtp_preds.parquet", index=False)
             pca_mdtp = _xgb_pca(canonical, groups=mdtp_groups)
             pca_mdtp.to_parquet(out_dir / "xgb_pca50_mdtp_preds.parquet", index=False)
-            records.append(_stratify_preds("xgb_hint_emb_mdtp", target, emb_mdtp, seen_by_id))
-            records.append(_stratify_preds("xgb_pca50_mdtp", target, pca_mdtp, seen_by_id))
+            records.append(_stratify_preds("xgb_hint_emb_mdtp", target, emb_mdtp, seen_by_id,
+                                           bootstrap_ci))
+            records.append(_stratify_preds("xgb_pca50_mdtp", target, pca_mdtp, seen_by_id,
+                                           bootstrap_ci))
     return records
+
+
+def rescore_from_saved(*, bootstrap_ci: int = 1000, targets: list[str] | None = None) -> int:
+    """Rebuild embed_swap_summary.csv from already-saved predictions — NO retraining.
+
+    For every target with predictions under runs/embed_swap/<target>/, recompute seen/unseen
+    metrics (with bootstrap CIs) for each saved model, plus the reused xgb_full baseline. Lets
+    `dsm reeval` add CIs to the CSV without the ~30-min HINT retrain that `run_embed_swap` needs."""
+    targets = targets if targets else list(TARGETS)
+    records: list[dict] = []
+    for target in targets:
+        ds_key, xgb_full_exp = TARGETS[target]
+        out_dir = EMBED_DIR / target
+        if not out_dir.exists():
+            continue
+        kind = DATASETS[ds_key].kind
+        seen_by_id = strat.seen_lookup(pd.read_parquet(materialize(DATASETS[ds_key])), kind)
+        # model name (filename minus _preds) -> saved predictions; hint_preds -> "hint".
+        preds_paths = {p.name[: -len("_preds.parquet")]: p
+                       for p in sorted(out_dir.glob("*_preds.parquet"))}
+        full_preds = run_mod.RUNS_DIR / xgb_full_exp / "predictions.parquet"
+        if full_preds.exists():
+            preds_paths["xgb_full"] = full_preds
+        for model_name, pf in preds_paths.items():
+            records.append(_stratify_preds(model_name, target, pd.read_parquet(pf),
+                                           seen_by_id, bootstrap_ci))
+    if not records:
+        return 0
+    (RUNS_DIR / "embed_swap_summary.csv").write_text(summary_frame(records).to_csv(index=False))
+    return len(records)
 
 
 # --------------------------------------------------------------------------- #

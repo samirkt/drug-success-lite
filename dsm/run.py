@@ -30,7 +30,7 @@ def run_experiment(
     *,
     output_root: Optional[Path] = None,
     epochs: Optional[int] = None,
-    bootstrap_ci: int = 0,
+    bootstrap_ci: int = 1000,
     force_materialize: bool = False,
 ) -> dict:
     if name not in EXPERIMENTS:
@@ -91,6 +91,8 @@ def collect_results(output_root: Optional[Path] = None) -> list[dict]:
             "roc_auc": o.get("roc_auc"),
             "pr_auc": o.get("pr_auc"),
             "f1": o.get("f1"),
+            **{f"{m}_{b}": o.get(f"{m}_{b}")
+               for m in ("roc_auc", "pr_auc", "f1") for b in ("lo", "hi")},
         })
     rows.extend(_embed_swap_rows(root))
     return rows
@@ -133,10 +135,39 @@ def _embed_swap_rows(root: Path) -> list[dict]:
                     "roc_auc": num(r.get("roc_auc"), float),
                     "pr_auc": num(r.get("pr_auc"), float),
                     "f1": num(r.get("f1"), float),
+                    **{f"{m}_{b}": num(r.get(f"{m}_{b}"), float)
+                       for m in ("roc_auc", "pr_auc", "f1") for b in ("lo", "hi")},
                 })
     except (OSError, KeyError, csv.Error):
         return []
     return out
+
+
+def reeval_all(*, output_root: Optional[Path] = None, bootstrap_ci: int = 1000) -> tuple[int, int]:
+    """Recompute metrics (with bootstrap CIs) from already-saved predictions — NO retraining.
+
+    Rewrites runs/<name>/metrics.json for every registered experiment that has a saved
+    predictions.parquet, then refreshes runs/embed_swap_summary.csv from the saved embed_swap
+    predictions. Returns (n_registered, n_embed_swap_rows)."""
+    root = Path(output_root or RUNS_DIR)
+    n_reg = 0
+    for name, spec in EXPERIMENTS.items():
+        preds_path = root / name / "predictions.parquet"
+        if not preds_path.exists():
+            continue
+        payload = {
+            "experiment": name,
+            "model": spec.model,
+            "features": list(spec.features),
+            "dataset": spec.dataset,
+            "native_benchmark": spec.native_benchmark,
+            **evaluate.evaluate_predictions(preds_path, bootstrap_ci=bootstrap_ci),
+        }
+        (root / name / "metrics.json").write_text(json.dumps(payload, indent=2, default=str))
+        n_reg += 1
+    from .embed_swap import rescore_from_saved  # lazy: embed_swap imports this module
+    n_embed = rescore_from_saved(bootstrap_ci=bootstrap_ci)
+    return n_reg, n_embed
 
 
 def materialize_dataset(name: str, *, force: bool = False) -> Path:

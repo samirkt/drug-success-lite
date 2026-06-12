@@ -22,7 +22,7 @@ import logging
 from . import ablation as ablation_mod
 from . import stratify as stratify_mod
 from .experiments import DATASETS, EXPERIMENTS
-from .run import collect_results, materialize_dataset, run_experiment
+from .run import collect_results, materialize_dataset, reeval_all, run_experiment
 
 logger = logging.getLogger(__name__)
 
@@ -91,13 +91,21 @@ def cmd_results(args) -> None:
         print("no results yet — run an experiment first (see `dsm list`).")
         return
     cols = ["experiment", "model", "dataset", "n", "n_pos", "roc_auc", "pr_auc", "f1"]
+    _ci_cols = {"roc_auc", "pr_auc", "f1"}
 
     def fmt_row(r: dict) -> dict:
         out = {}
         for c in cols:
             v = r.get(c)
-            out[c] = (f"{v:.4f}" if isinstance(v, float) and v == v
-                      else ("" if v is None else str(v)))
+            if c in _ci_cols and isinstance(v, float) and v == v:
+                lo, hi = r.get(f"{c}_lo"), r.get(f"{c}_hi")
+                if isinstance(lo, float) and lo == lo and isinstance(hi, float) and hi == hi:
+                    out[c] = f"{v:.4f} [{lo:.4f}, {hi:.4f}]"
+                else:
+                    out[c] = f"{v:.4f}"
+            else:
+                out[c] = (f"{v:.4f}" if isinstance(v, float) and v == v
+                          else ("" if v is None else str(v)))
         return out
 
     # --first-class: only the curated headline cells, in fixed paper order (no grouping/sorting).
@@ -143,15 +151,30 @@ def cmd_results(args) -> None:
 
 
 def cmd_stratify(args) -> None:
-    names = None if args.experiment is None else [args.experiment]
-    records = stratify_mod.stratify_all(names)
+    n_boot = args.bootstrap_ci
+    if args.first_class:
+        # Curated headline cells (full sweep, then filter+order); a view — don't clobber the CSV.
+        records = stratify_mod.stratify_all(None, bootstrap_ci=n_boot)
+        order = {name: i for i, name in enumerate(_FIRST_CLASS)}
+        records = sorted((r for r in records if r["experiment"] in order),
+                         key=lambda r: order[r["experiment"]])
+    else:
+        names = None if args.experiment is None else [args.experiment]
+        records = stratify_mod.stratify_all(names, bootstrap_ci=n_boot)
     if not records:
         print("no predictions found — run an experiment first (see `dsm list`).")
         return
     stratify_mod.print_table(records)
-    summary = stratify_mod.RUNS_DIR / "stratified_summary.csv"
-    stratify_mod.summary_frame(records).to_csv(summary, index=False)
-    print(f"\nwrote {summary}")
+    if not args.first_class:
+        summary = stratify_mod.RUNS_DIR / "stratified_summary.csv"
+        stratify_mod.summary_frame(records).to_csv(summary, index=False)
+        print(f"\nwrote {summary}")
+
+
+def cmd_reeval(args) -> None:
+    n_reg, n_embed = reeval_all(bootstrap_ci=args.bootstrap_ci)
+    print(f"reeval (bootstrap_ci={args.bootstrap_ci}, no retraining): "
+          f"rewrote {n_reg} metrics.json + {n_embed} embed_swap_summary rows.")
 
 
 def cmd_ablation(args) -> None:
@@ -178,6 +201,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("stratify", help="seen vs unseen drug breakdown of saved predictions")
     s.add_argument("experiment", nargs="?", help="one experiment, or omit for all (see `dsm list`)")
+    s.add_argument("--first-class", action="store_true",
+                   help="only the curated headline cells, in paper order")
+    s.add_argument("--bootstrap-ci", type=int, default=1000,
+                   help="bootstrap resamples for 95%% CIs (0 = off)")
     s.set_defaults(func=cmd_stratify)
 
     a = sub.add_parser("ablation", help="single-group feature ablation (xgb/ours_di) on seen vs unseen")
@@ -189,11 +216,16 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--force", action="store_true", help="rebuild even if it exists")
     m.set_defaults(func=cmd_materialize)
 
+    e = sub.add_parser("reeval", help="recompute metrics+CIs from saved predictions (no retraining)")
+    e.add_argument("--bootstrap-ci", type=int, default=1000,
+                   help="bootstrap resamples for 95%% CIs (0 = off)")
+    e.set_defaults(func=cmd_reeval)
+
     r = sub.add_parser("run", help="run an experiment (or --all)")
     r.add_argument("experiment", nargs="?", help="experiment name (see `dsm list`)")
     r.add_argument("--all", action="store_true", help="run every experiment")
     r.add_argument("--epochs", type=int, default=None, help="override HINT epochs")
-    r.add_argument("--bootstrap-ci", type=int, default=0,
+    r.add_argument("--bootstrap-ci", type=int, default=1000,
                    help="bootstrap resamples for 95%% CIs (0 = off)")
     r.add_argument("--force-materialize", action="store_true",
                    help="rebuild the dataset parquet before running")

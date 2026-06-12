@@ -21,6 +21,7 @@ from sklearn.metrics import average_precision_score, precision_recall_curve, roc
 
 from .config import PROJECT_ROOT
 from .datasets import materialize
+from .evaluate import _bootstrap_metric_ci
 from .experiments import DATASETS, EXPERIMENTS
 
 RUNS_DIR = PROJECT_ROOT / "runs"
@@ -28,6 +29,9 @@ MIN_STRATUM_N = 20
 
 # native-repro experiments share the canonical benchmark dataset for membership.
 _NATIVE_TO_DATASET = {"phase_I": "hint_p1", "phase_II": "hint_p2", "phase_III": "hint_p3"}
+
+# embed_swap target -> canonical dataset key (its predictions live in runs/embed_swap/<target>/).
+_EMBED_SWAP_DATASET = {"p1": "hint_p1", "p2": "hint_p2", "p3": "hint_p3", "di": "ours_di"}
 
 
 # --------------------------------------------------------------------------- #
@@ -65,7 +69,7 @@ def seen_lookup(dataset_df: pd.DataFrame, kind: str) -> dict:
 # --------------------------------------------------------------------------- #
 # Metrics (max-F1 threshold per set)
 # --------------------------------------------------------------------------- #
-def strat_metrics(y, proba) -> dict:
+def strat_metrics(y, proba, *, bootstrap_ci: int = 0) -> dict:
     y = np.asarray(y).astype(int)
     proba = np.asarray(proba).astype(float)
     n, n_pos = int(len(y)), int(y.sum())
@@ -79,13 +83,17 @@ def strat_metrics(y, proba) -> dict:
         f1s = np.nan_to_num(2 * prec * rec / (prec + rec))
     best = int(np.argmax(f1s))
     f1_threshold = float(thr[best]) if best < len(thr) else 1.0
-    return {
+    out = {
         **base,
         "roc_auc": float(roc_auc_score(y, proba)),
         "pr_auc": float(average_precision_score(y, proba)),
         "f1": float(f1s[best]),
         "f1_threshold": f1_threshold,
     }
+    if bootstrap_ci > 0:
+        # CI for f1 at this set's own max-F1 threshold (matches the point estimate's convention).
+        out.update(_bootstrap_metric_ci(y, proba, n_boot=bootstrap_ci, threshold=f1_threshold))
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -99,7 +107,23 @@ def resolve_dataset(spec) -> tuple[str, str]:
     return name, DATASETS[name].kind
 
 
-def stratify_experiment(name: str) -> dict | None:
+def _strata(preds: pd.DataFrame, seen_by_id: dict, label: str, bootstrap_ci: int) -> dict:
+    """Map seen membership and score ALL / SEEN / UNSEEN from already-saved predictions."""
+    preds = preds.copy()
+    preds["seen"] = preds["example_id"].astype(str).map(seen_by_id)
+    n_unmatched = int(preds["seen"].isna().sum())
+    if n_unmatched:
+        print(f"  ! {label}: {n_unmatched} predictions had no dataset match (dropped)")
+        preds = preds.dropna(subset=["seen"])
+    return {
+        stratum: strat_metrics(sub["label"], sub["y_proba"], bootstrap_ci=bootstrap_ci)
+        for stratum, sub in (("all", preds),
+                             ("seen", preds[preds["seen"]]),
+                             ("unseen", preds[~preds["seen"]]))
+    }
+
+
+def stratify_experiment(name: str, bootstrap_ci: int = 0) -> dict | None:
     spec = EXPERIMENTS[name]
     preds_path = RUNS_DIR / name / "predictions.parquet"
     if not preds_path.exists():
@@ -109,31 +133,51 @@ def stratify_experiment(name: str) -> dict | None:
     dataset_df = pd.read_parquet(materialize(DATASETS[dataset_name]))
     seen_by_id = seen_lookup(dataset_df, kind)
 
-    preds = pd.read_parquet(preds_path)
-    preds["seen"] = preds["example_id"].astype(str).map(seen_by_id)
-    n_unmatched = int(preds["seen"].isna().sum())
-    if n_unmatched:
-        print(f"  ! {name}: {n_unmatched} predictions had no dataset match (dropped)")
-        preds = preds.dropna(subset=["seen"])
-
     rec = {
         "experiment": name,
         "dataset": dataset_name,
         "drug_identity": "candidate_id_prefix" if kind == "dsm" else "smiles",
         "seen_rule": "any",
+        **_strata(pd.read_parquet(preds_path), seen_by_id, name, bootstrap_ci),
     }
-    for stratum, sub in (("all", preds),
-                         ("seen", preds[preds["seen"]]),
-                         ("unseen", preds[~preds["seen"]])):
-        rec[stratum] = strat_metrics(sub["label"], sub["y_proba"])
-
     (RUNS_DIR / name / "stratified.json").write_text(json.dumps(rec, indent=2))
     return rec
 
 
-def stratify_all(names: list[str] | None = None) -> list[dict]:
-    names = names if names is not None else list(EXPERIMENTS)
-    return [rec for rec in (stratify_experiment(n) for n in names) if rec is not None]
+def stratify_embed_swap(bootstrap_ci: int = 0) -> list[dict]:
+    """Stratify the embed_swap models (xgb_pca50/xgb_hint_emb and their mdtp variants), whose
+    predictions live in runs/embed_swap/<target>/<model>_preds.parquet rather than as registered
+    experiments. Mirrors run.py's _embed_swap_rows so `dsm stratify` covers every model."""
+    out: list[dict] = []
+    for target, ds_key in _EMBED_SWAP_DATASET.items():
+        target_dir = RUNS_DIR / "embed_swap" / target
+        pred_files = sorted(target_dir.glob("*_preds.parquet"))
+        # Only the embedding-swap xgb models; hint_preds is the registered hint_* experiment.
+        pred_files = [p for p in pred_files if p.name.startswith("xgb_")]
+        if not pred_files:
+            continue
+        kind = DATASETS[ds_key].kind
+        dataset_df = pd.read_parquet(materialize(DATASETS[ds_key]))
+        seen_by_id = seen_lookup(dataset_df, kind)
+        for pf in pred_files:
+            model = pf.name[: -len("_preds.parquet")]      # e.g. xgb_pca50, xgb_hint_emb_mdtp
+            name = f"{model}_{target}"                       # matches _FIRST_CLASS / _embed_swap_rows
+            out.append({
+                "experiment": name,
+                "dataset": ds_key,
+                "drug_identity": "candidate_id_prefix" if kind == "dsm" else "smiles",
+                "seen_rule": "any",
+                **_strata(pd.read_parquet(pf), seen_by_id, name, bootstrap_ci),
+            })
+    return out
+
+
+def stratify_all(names: list[str] | None = None, bootstrap_ci: int = 0) -> list[dict]:
+    if names is not None:
+        return [r for r in (stratify_experiment(n, bootstrap_ci) for n in names) if r is not None]
+    # Full sweep: registered experiments + the embed_swap models (so all results show up).
+    recs = [r for r in (stratify_experiment(n, bootstrap_ci) for n in EXPERIMENTS) if r is not None]
+    return recs + stratify_embed_swap(bootstrap_ci)
 
 
 # --------------------------------------------------------------------------- #
@@ -145,6 +189,15 @@ def _fmt(v):
     return str(v)
 
 
+def _fmt_ci(m: dict, key: str) -> str:
+    """`0.690 [0.652, 0.731]` when a bootstrap CI is present, else just the point estimate."""
+    pt = m.get(key)
+    lo, hi = m.get(f"{key}_lo"), m.get(f"{key}_hi")
+    if isinstance(lo, float) and lo == lo and isinstance(hi, float) and hi == hi:
+        return f"{_fmt(pt)} [{lo:.4f}, {hi:.4f}]"
+    return _fmt(pt)
+
+
 def print_table(records: list[dict]) -> None:
     cols = ["experiment", "stratum", "n", "n_pos", "roc_auc", "pr_auc", "f1", "f1_thr"]
     rows = []
@@ -154,8 +207,8 @@ def print_table(records: list[dict]) -> None:
             rows.append({
                 "experiment": r["experiment"], "stratum": stratum,
                 "n": m["n"], "n_pos": m["n_pos"],
-                "roc_auc": _fmt(m["roc_auc"]), "pr_auc": _fmt(m["pr_auc"]),
-                "f1": _fmt(m["f1"]), "f1_thr": _fmt(m["f1_threshold"]),
+                "roc_auc": _fmt_ci(m, "roc_auc"), "pr_auc": _fmt_ci(m, "pr_auc"),
+                "f1": _fmt_ci(m, "f1"), "f1_thr": _fmt(m["f1_threshold"]),
             })
     w = {c: max(len(c), *(len(str(row[c])) for row in rows)) for c in cols}
     print("  ".join(c.ljust(w[c]) for c in cols))
