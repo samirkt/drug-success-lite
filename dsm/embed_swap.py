@@ -82,27 +82,24 @@ def _fit_predict_xgb(X_train, y_train, X_test, test_df, *, seed=0, inner_val_siz
     })
 
 
-def _xgb_hint_emb(emb_path) -> pd.DataFrame:
-    """XGB on HINT's dumped 100-d (50 MPNN + 50 GRAM) vectors."""
-    df = pd.read_parquet(emb_path)
-    emb_cols = [c for c in df.columns if c.startswith("emb_")]
-    train_df = df[df["split"].isin(["train", "valid"])].reset_index(drop=True)
-    test_df = df[df["split"] == "test"].reset_index(drop=True)
-    X_train = train_df[emb_cols].to_numpy(dtype=np.float32)
-    X_test = test_df[emb_cols].to_numpy(dtype=np.float32)
-    return _fit_predict_xgb(X_train, train_df["label"].to_numpy(dtype=int), X_test, test_df)
-
-
-def _xgb_pca50(canonical_path) -> pd.DataFrame:
-    """Symmetric control: XGB on PCA-50(fingerprint) + PCA-50(disease) = 100-d.
-
-    The molecule fingerprint (deterministic) and the disease block (dataset-dispatched by the
-    sklearn adapter: ICD multi-hot on the benchmark, DiseaseGroup on our data; vocab fit on
-    train) are each reduced to 50-d by a PCA fit on the train slice, mirroring HINT's 50+50
-    learned bottleneck."""
-    from sklearn.decomposition import PCA
-
+def _group_matrix(name, df, train_df, y_train) -> np.ndarray:
+    """Dense feature block for one group. `molecule` -> deterministic ECFP4+MACCS; everything
+    else dispatches to the dsm encoders (disease/target/pathway), fit on the train slice."""
     from .models.sklearn_adapter import _make_encoders, _takes_y
+
+    if name == "molecule":
+        return MoleculeFP().transform(df)                 # (n, 2215), deterministic
+    encs = _make_encoders([name], df)
+    for e in encs:
+        e.fit(train_df, y_train) if _takes_y(e) else e.fit(train_df)
+    return np.hstack([e.transform(df) for e in encs])
+
+
+def _pca_features(canonical_path, groups):
+    """PCA-50 per group, concatenated. Each group's block is reduced to <=50-d by a PCA fit on
+    the train slice, mirroring HINT's 50-d-per-encoder learned bottleneck. Returns
+    (df, train_mask, test_mask, X) where X is row-aligned to df."""
+    from sklearn.decomposition import PCA
 
     df = pd.read_parquet(canonical_path)
     train_mask = df["split"].isin(["train", "valid"]).to_numpy()
@@ -110,19 +107,42 @@ def _xgb_pca50(canonical_path) -> pd.DataFrame:
     train_df = df[train_mask].reset_index(drop=True)
     y_train = train_df["label"].to_numpy(dtype=int)
 
-    mol = MoleculeFP().transform(df)                      # (n, 2215), deterministic
-    disease_encs = _make_encoders(["disease"], df)        # ICD multi-hot OR DiseaseGroup
-    for e in disease_encs:
-        e.fit(train_df, y_train) if _takes_y(e) else e.fit(train_df)
-    disease = np.hstack([e.transform(df) for e in disease_encs])
-
     blocks = []
-    for mat in (mol, disease):
+    for g in groups:
+        mat = _group_matrix(g, df, train_df, y_train)
         pca = PCA(n_components=min(50, mat.shape[1]), random_state=0)
         pca.fit(mat[train_mask])
         blocks.append(pca.transform(mat))
     X = np.hstack(blocks).astype(np.float32)
+    return df, train_mask, test_mask, X
 
+
+def _xgb_hint_emb(emb_path, canonical_path=None, extra_groups=()) -> pd.DataFrame:
+    """XGB on HINT's dumped 100-d (50 MPNN + 50 GRAM) vectors. When `extra_groups` is given,
+    append a PCA-50-per-group block (e.g. target+pathway) aligned by example_id — HINT can't
+    encode those modalities, so they enter through the same PCA control used by xgb_pca."""
+    df = pd.read_parquet(emb_path)
+    emb_cols = [c for c in df.columns if c.startswith("emb_")]
+    train_df = df[df["split"].isin(["train", "valid"])].reset_index(drop=True)
+    test_df = df[df["split"] == "test"].reset_index(drop=True)
+    X_train = train_df[emb_cols].to_numpy(dtype=np.float32)
+    X_test = test_df[emb_cols].to_numpy(dtype=np.float32)
+
+    if extra_groups:
+        cdf, _, _, Xtp = _pca_features(canonical_path, extra_groups)
+        tp_by_id = dict(zip(cdf["example_id"].astype(str), Xtp))
+        tp = lambda frame: np.vstack([tp_by_id[e] for e in frame["example_id"].astype(str)])
+        X_train = np.hstack([X_train, tp(train_df)]).astype(np.float32)
+        X_test = np.hstack([X_test, tp(test_df)]).astype(np.float32)
+
+    return _fit_predict_xgb(X_train, train_df["label"].to_numpy(dtype=int), X_test, test_df)
+
+
+def _xgb_pca(canonical_path, groups=("molecule", "disease")) -> pd.DataFrame:
+    """Symmetric control: XGB on PCA-50 per group (default mol+disease = 100-d, mirroring HINT's
+    50+50 bottleneck). The mdtp variant adds target+pathway as two more PCA-50 blocks."""
+    df, train_mask, test_mask, X = _pca_features(canonical_path, groups)
+    y_train = df[train_mask]["label"].to_numpy(dtype=int)
     test_df = df[test_mask].reset_index(drop=True)
     return _fit_predict_xgb(X[train_mask], y_train, X[test_mask], test_df)
 
@@ -155,20 +175,23 @@ def run_embed_swap(targets: list[str] | None = None, force: bool = False) -> lis
         hint_preds = out_dir / "hint_preds.parquet"
         emb_path = out_dir / "embeddings.parquet"
 
-        # 1. HINT: predictions + dumped 100-d embeddings (one training).
+        # 1. HINT: predictions + dumped 100-d embeddings (one training). Class-imbalance
+        # handling is opt-in on di only (mirrors the hint_di_2019 experiment); the benchmark
+        # phases stay vanilla so their numbers are unchanged.
         if force or not emb_path.exists() or not hint_preds.exists():
             hint_adapter.run(dataset_path=canonical, features=["mol", "disease"],
-                             out_path=hint_preds, dump_embeddings=emb_path)
+                             out_path=hint_preds, dump_embeddings=emb_path,
+                             class_weight=(target == "di"))
 
         # 2. full-feature xgb baseline (reuse the registered experiment).
         full_preds = run_mod.RUNS_DIR / xgb_full_exp / "predictions.parquet"
         if force or not full_preds.exists():
             run_mod.run_experiment(xgb_full_exp)
 
-        # 3. the two new xgb prediction sets.
+        # 3. the two new xgb prediction sets (mol+disease).
         emb_pred_df = _xgb_hint_emb(emb_path)
         emb_pred_df.to_parquet(out_dir / "xgb_hint_emb_preds.parquet", index=False)
-        pca_pred_df = _xgb_pca50(canonical)
+        pca_pred_df = _xgb_pca(canonical)
         pca_pred_df.to_parquet(out_dir / "xgb_pca50_preds.parquet", index=False)
 
         # 4. stratify all four (seen/unseen by the dataset's drug-identity rule).
@@ -181,6 +204,18 @@ def run_embed_swap(targets: list[str] | None = None, force: bool = False) -> lis
         }
         for model_name in MODELS:
             records.append(_stratify_preds(model_name, target, preds_by_model[model_name], seen_by_id))
+
+        # 5. di only: mdtp variants (add target+pathway as PCA-50 blocks to each, so the only
+        # difference between them stays the mol+disease representation — HINT-emb vs PCA).
+        if target == "di":
+            mdtp_groups = ("molecule", "disease", "target", "pathway")
+            emb_mdtp = _xgb_hint_emb(emb_path, canonical_path=canonical,
+                                     extra_groups=("target", "pathway"))
+            emb_mdtp.to_parquet(out_dir / "xgb_hint_emb_mdtp_preds.parquet", index=False)
+            pca_mdtp = _xgb_pca(canonical, groups=mdtp_groups)
+            pca_mdtp.to_parquet(out_dir / "xgb_pca50_mdtp_preds.parquet", index=False)
+            records.append(_stratify_preds("xgb_hint_emb_mdtp", target, emb_mdtp, seen_by_id))
+            records.append(_stratify_preds("xgb_pca50_mdtp", target, pca_mdtp, seen_by_id))
     return records
 
 

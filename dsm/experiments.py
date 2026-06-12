@@ -45,6 +45,7 @@ class ExperimentSpec:
     dataset: Optional[str] = None                # key into DATASETS (canonical path)
     native_benchmark: Optional[str] = None       # phase stem (HINT native repro path)
     epochs: int = 5                              # hint only
+    class_weight: bool = False                   # hint only: pos_weight=n_neg/n_pos in the BCE loss
 
     def __post_init__(self):
         if not (self.dataset or self.native_benchmark):
@@ -60,7 +61,7 @@ EXPERIMENTS: dict[str, ExperimentSpec] = {s.name: s for s in [
     # --- our data: best model + feature-matched HINT ---
     _e("xgb_di_2019", "xgb", ALL_GROUPS, dataset="ours_di"),
     _e("xgb_di_md", "xgb", ("molecule", "disease"), dataset="ours_di"),
-    _e("hint_di_2019", "hint", ("mol", "disease"), dataset="ours_di"),
+    _e("hint_di_2019", "hint", ("mol", "disease"), dataset="ours_di", class_weight=True),
     # ChemAP (pretrained black box, SMILES-only) on the aligned approval target.
     _e("chemap_di_2019", "chemap", ("mol",), dataset="ours_di"),
 

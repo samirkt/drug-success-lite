@@ -52,6 +52,7 @@ def run_experiment(
         out_path=preds_path,
         native_benchmark=spec.native_benchmark,
         epochs=epochs or spec.epochs,
+        class_weight=spec.class_weight,
     )
 
     payload = {
@@ -119,7 +120,8 @@ def _embed_swap_rows(root: Path) -> list[dict]:
     try:
         with open(path, newline="") as f:
             for r in csv.DictReader(f):
-                if r.get("stratum") != "all" or r.get("model") not in ("xgb_hint_emb", "xgb_pca50"):
+                if r.get("stratum") != "all" or r.get("model") not in (
+                        "xgb_hint_emb", "xgb_pca50", "xgb_hint_emb_mdtp", "xgb_pca50_mdtp"):
                     continue
                 target = r.get("target", "")
                 out.append({

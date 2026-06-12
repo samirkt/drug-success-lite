@@ -29,7 +29,7 @@ HINT_DIR = Path(__file__).resolve().parents[2] / "hint"
 def run(*, dataset_path: Optional[Path], features: list[str], out_path: Path,
         native_benchmark: Optional[str] = None, epochs: int = 5, lr: float = 1e-3,
         seed: int = 42, device: str = "cpu", dump_embeddings: Optional[Path] = None,
-        **_ignored) -> Path:
+        class_weight: bool = False, **_ignored) -> Path:
     out_path = Path(out_path).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -43,6 +43,8 @@ def run(*, dataset_path: Optional[Path], features: list[str], out_path: Path,
     ]
     if dump_embeddings is not None:
         cmd += ["--dump-embeddings", str(Path(dump_embeddings).resolve())]
+    if class_weight:
+        cmd += ["--class-weight"]
     if native_benchmark:
         cmd += ["--native-benchmark", native_benchmark]
     else:

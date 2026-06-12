@@ -60,6 +60,19 @@ def cmd_run(args) -> None:
 # dataset -> display group, in print order. Anything unmatched falls in "Other".
 _RESULT_GROUPS = ["HINT benchmark", "Drug-indication (ours_di)", "Trial (ours_trial)", "Other"]
 
+# The curated headline cells for the paper, in presentation order (`dsm results --first-class`).
+# Names match the `experiment` field from collect_results (embed_swap rows are `f"{model}_{target}"`).
+_FIRST_CLASS = [
+    # HINT benchmark p1-3: HINT vs the two embedding-swap XGB controls (PCA-50 / HINT-emb).
+    "hint_bench_p1", "xgb_pca50_p1", "xgb_hint_emb_p1",
+    "hint_bench_p2", "xgb_pca50_p2", "xgb_hint_emb_p2",
+    "hint_bench_p3", "xgb_pca50_p3", "xgb_hint_emb_p3",
+    # Drug-indication: HINT (class-imbalance handled) vs md and mdtp XGB controls.
+    "hint_di_2019",
+    "xgb_pca50_di", "xgb_hint_emb_di",
+    "xgb_pca50_mdtp_di", "xgb_hint_emb_mdtp_di",
+]
+
 
 def _result_group(dataset: str) -> str:
     d = dataset or ""
@@ -86,6 +99,24 @@ def cmd_results(args) -> None:
             out[c] = (f"{v:.4f}" if isinstance(v, float) and v == v
                       else ("" if v is None else str(v)))
         return out
+
+    # --first-class: only the curated headline cells, in fixed paper order (no grouping/sorting).
+    if getattr(args, "first_class", False):
+        order = {name: i for i, name in enumerate(_FIRST_CLASS)}
+        rows = sorted((r for r in rows if r["experiment"] in order),
+                      key=lambda r: order[r["experiment"]])
+        if not rows:
+            print("no first-class results yet — run the HINT experiments and "
+                  "`python -m dsm.embed_swap` (see the plan).")
+            return
+        fmt_all = [fmt_row(r) for r in rows]
+        w = {c: max(len(c), *(len(f[c]) for f in fmt_all)) for c in cols}
+        print("=== First-class results ===")
+        print("  ".join(c.ljust(w[c]) for c in cols))
+        print("  ".join("-" * w[c] for c in cols))
+        for fr in fmt_all:
+            print("  ".join(fr[c].ljust(w[c]) for c in cols))
+        return
 
     # Global column widths so the per-dataset tables line up with each other.
     fmt_all = [fmt_row(r) for r in rows]
@@ -140,7 +171,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("list", help="list datasets and experiments").set_defaults(func=cmd_list)
-    sub.add_parser("results", help="table of all runs/*/metrics.json").set_defaults(func=cmd_results)
+    rp = sub.add_parser("results", help="table of all runs/*/metrics.json")
+    rp.add_argument("--first-class", action="store_true",
+                    help="only the curated headline cells, in paper order")
+    rp.set_defaults(func=cmd_results)
 
     s = sub.add_parser("stratify", help="seen vs unseen drug breakdown of saved predictions")
     s.add_argument("experiment", nargs="?", help="one experiment, or omit for all (see `dsm list`)")

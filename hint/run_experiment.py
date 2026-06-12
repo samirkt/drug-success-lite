@@ -178,6 +178,8 @@ def main():
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--dump-embeddings", default=None,
                     help="also write HINT's trained 100-d (MPNN+GRAM) vectors for all splits here")
+    ap.add_argument("--class-weight", action="store_true",
+                    help="weight the BCE loss by pos_weight=n_neg/n_pos (handles class imbalance)")
     args = ap.parse_args()
 
     global VALID_FRAC, SEED
@@ -224,6 +226,14 @@ def main():
         epoch=args.epochs, lr=args.lr, weight_decay=0,
     )
     model.init_pretrain(admet_model)
+    if args.class_weight:
+        n_pos = sum(int(r["label"]) for r in train_rows)
+        n_neg = len(train_rows) - n_pos
+        pos_weight = (n_neg / n_pos) if n_pos else 1.0
+        model.loss = torch.nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor([pos_weight], dtype=torch.float32, device=device))
+        print(f"[hint] class_weight on: pos_weight={pos_weight:.3f} "
+              f"(n_pos={n_pos} n_neg={n_neg})", flush=True)
     model.learn(train_loader, valid_loader, test_loader)
 
     # Interaction.generate_predict returns (loss, predict, label, nctid) — key by nctid.
