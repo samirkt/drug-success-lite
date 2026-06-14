@@ -1,0 +1,41 @@
+EXPERIMENT MAP — code -> what it tests
+Last updated: 2026-06-12
+Source of truth: dsm/experiments.py (registered) + dsm/embed_swap.py (embed-swap families).
+Update this by hand when you add or rename an experiment.
+
+=== Headline: our drug-indication data (ours_di, P1 -> eventual approval) ===
+xgb_di_2019        XGBoost on all 5 feature groups — the best/headline model on our data.
+xgb_di_md          XGBoost on molecule+disease only — how much admet/target/pathway actually add.
+hint_di_2019       HINT (graph+text), feature-matched to mol+disease, class-weighted — does HINT's architecture beat XGB on the same inputs?
+chemap_di_2019     Pretrained SMILES-only ChemAP as a black box — how a structure-only transfer model does on the aligned approval target.
+
+=== HINT phase-transition benchmark, canonical comparison (identical population & inputs) ===
+xgb_bench_p1/p2/p3   XGBoost mol+disease on the phase-1/2/3 benchmark — the XGB side of the matched comparison.
+hint_bench_p1/p2/p3  HINT mol+disease on the same population — the matched HINT side.
+
+=== HINT benchmark reproduction (HINT's own native data path, all features) ===
+hint_bench_p1_repro/p2_repro/p3_repro  HINT with mol+disease+criteria on its native path — reproduces the published HINT numbers.
+
+=== Single-group ablations (XGBoost, ours_di; baseline = xgb_di_2019) ===
+abl_molecule       Molecule group alone — standalone predictive power of structure (ECFP4+MACCS).
+abl_disease        Disease group alone — standalone power of MeSH/disease-area features.
+abl_admet          ADMET group alone — standalone power of the DrugBank ADMET percentiles.
+abl_target         Target group alone — standalone power of the engineered OpenTargets target features.
+abl_pathway        Pathway group alone — standalone power of the Reactome pathway features.
+abl_target_genes   Raw drug->target UniProt multi-hot alone — simpler target representation vs the engineered target group.
+
+=== Embed-swap families (representation-vs-classifier; from dsm/embed_swap.py) ===
+xgb_hint_emb_<t>   XGBoost on HINT's learned 100-d embedding (50 MPNN + 50 GRAM) — is the gap HINT's representation or its classifier head?
+xgb_pca50_<t>      XGBoost on PCA-50-per-group (symmetric 50-d bottleneck control) — does a plain bottleneck alone explain HINT's level?
+
+  <t> target suffix:  _p1 / _p2 / _p3 = HINT benchmark phases;  _di = our drug-indication data.
+  feature variants (di only):  _md  = molecule+disease (default)
+                               _mdt = + engineered target group
+                               _mdg = + target_genes (raw UniProt multi-hot)
+                               _mdtp= + target + pathway
+  e.g.  xgb_hint_emb_mdtp_di = HINT embedding + PCA-50(target)+PCA-50(pathway) blocks on ours_di.
+
+=== Datasets referenced above ===
+ours_di     drug-indication candidates, temporal split <=2019 train / >2019 test; label = eventual approval.
+ours_trial  trial-level candidates, same temporal split.
+hint_p1/2/3 HINT TOP phase-transition benchmark (phase I/II/III), native 3-way split.

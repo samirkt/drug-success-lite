@@ -82,7 +82,7 @@ def _make_encoders(features: list[str], df: pd.DataFrame) -> list:
                 encs.append(MultiHot("icd_codes", prefix="icd", top_k=200))  # benchmark
         elif n == "icd":
             encs.append(MultiHot("icd_codes", prefix="icd", top_k=200))
-        elif n in ("admet", "target", "pathway"):
+        elif n in ("admet", "target", "pathway", "target_genes"):
             if not _group_available(n, df):
                 raise ValueError(
                     f"feature group {n!r} needs rich columns absent from this dataset"

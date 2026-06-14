@@ -68,9 +68,12 @@ _FIRST_CLASS = [
     "hint_bench_p1", "xgb_pca50_p1", "xgb_hint_emb_p1",
     "hint_bench_p2", "xgb_pca50_p2", "xgb_hint_emb_p2",
     "hint_bench_p3", "xgb_pca50_p3", "xgb_hint_emb_p3",
-    # Drug-indication: HINT (class-imbalance handled) vs md and mdtp XGB controls.
+    # Drug-indication: HINT (class-imbalance handled) vs md / mdt / mdg / mdtp XGB controls.
+    # md = molecule+disease; t = old feature-wise target; g = target_genes multi-hot; p = pathway.
     "hint_di_2019",
     "xgb_pca50_di", "xgb_hint_emb_di",
+    "xgb_pca50_mdt_di", "xgb_hint_emb_mdt_di",
+    "xgb_pca50_mdg_di", "xgb_hint_emb_mdg_di",
     "xgb_pca50_mdtp_di", "xgb_hint_emb_mdtp_di",
 ]
 

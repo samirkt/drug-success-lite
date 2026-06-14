@@ -123,7 +123,10 @@ def _embed_swap_rows(root: Path) -> list[dict]:
         with open(path, newline="") as f:
             for r in csv.DictReader(f):
                 if r.get("stratum") != "all" or r.get("model") not in (
-                        "xgb_hint_emb", "xgb_pca50", "xgb_hint_emb_mdtp", "xgb_pca50_mdtp"):
+                        "xgb_hint_emb", "xgb_pca50",
+                        "xgb_hint_emb_mdt", "xgb_pca50_mdt",
+                        "xgb_hint_emb_mdg", "xgb_pca50_mdg",
+                        "xgb_hint_emb_mdtp", "xgb_pca50_mdtp"):
                     continue
                 target = r.get("target", "")
                 out.append({

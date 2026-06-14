@@ -81,4 +81,7 @@ EXPERIMENTS: dict[str, ExperimentSpec] = {s.name: s for s in [
     # --- single-group ablation of the headline model (xgb on ours_di) ---
     # baseline = xgb_di_2019 (all groups); see dsm/ablation.py.
     *[_e(f"abl_{g}", "xgb", (g,), dataset="ours_di") for g in ALL_GROUPS],
+    # alternate target representation: raw drug->target UniProt multi-hot (vs the engineered
+    # `target` group). Not in ALL_GROUPS, so the full baseline is untouched; ablation folds it in.
+    _e("abl_target_genes", "xgb", ("target_genes",), dataset="ours_di"),
 ]}

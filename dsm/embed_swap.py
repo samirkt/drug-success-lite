@@ -221,6 +221,18 @@ def run_embed_swap(targets: list[str] | None = None, force: bool = False,
                                            bootstrap_ci))
             records.append(_stratify_preds("xgb_pca50_mdtp", target, pca_mdtp, seen_by_id,
                                            bootstrap_ci))
+
+            # mdt / mdg: md + a single PCA-50 target block, so which target representation is
+            # explicit. t = the old feature-wise `target` group; g = the `target_genes` multi-hot.
+            for tag, extra in (("mdt", "target"), ("mdg", "target_genes")):
+                emb = _xgb_hint_emb(emb_path, canonical_path=canonical, extra_groups=(extra,))
+                emb.to_parquet(out_dir / f"xgb_hint_emb_{tag}_preds.parquet", index=False)
+                pca = _xgb_pca(canonical, groups=("molecule", "disease", extra))
+                pca.to_parquet(out_dir / f"xgb_pca50_{tag}_preds.parquet", index=False)
+                records.append(_stratify_preds(f"xgb_hint_emb_{tag}", target, emb, seen_by_id,
+                                               bootstrap_ci))
+                records.append(_stratify_preds(f"xgb_pca50_{tag}", target, pca, seen_by_id,
+                                               bootstrap_ci))
     return records
 
 

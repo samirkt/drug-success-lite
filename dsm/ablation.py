@@ -19,7 +19,8 @@ from . import stratify as strat
 from .experiments import ALL_GROUPS
 
 FULL = "xgb_di_2019"                       # 5-group baseline (Δ reference)
-FAMILY = [f"abl_{g}" for g in ALL_GROUPS]  # single-group variants
+# single-group variants: the 5 ALL_GROUPS + the alternate raw target-gene multi-hot.
+FAMILY = [f"abl_{g}" for g in ALL_GROUPS] + ["abl_target_genes"]
 STRATA = ("all", "seen", "unseen")
 _METRICS = ("roc_auc", "pr_auc", "f1")
 

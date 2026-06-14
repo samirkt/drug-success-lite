@@ -181,6 +181,20 @@ class TargetGroup(CompositeGroup):
 
 
 @register
+class TargetGenesGroup(CompositeGroup):
+    """Alternate target representation: a top-K multi-hot of the raw drug->target UniProt
+    IDs (the `drug_targets` column), and nothing else. Homogeneous binary indicators, in
+    contrast to TargetGroup's mixed engineered features (MoA / genetic / LOEUF / tractability)."""
+
+    name = "target_genes"
+
+    def __init__(self) -> None:
+        super().__init__(self.name, [
+            MultiHot("drug_targets", prefix="drug_target", top_k=500),
+        ])
+
+
+@register
 class PathwayGroup(CompositeGroup):
     name = "pathway"
 
