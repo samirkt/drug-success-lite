@@ -105,12 +105,12 @@ def _matrix(encoders: list, df: pd.DataFrame) -> np.ndarray:
 
 def fit_encoders_clf(train_df, features, *, model: str = "xgb", seed: int = 0,
                      inner_val_size: float = 0.1):
-    """Fit feature encoders + classifier on a train frame, returning (encoders, clf).
+    """Fit feature encoders + classifier on a train frame.
 
-    Carves a stratified inner-val from `train_df` for early stopping, fits the encoders on the
-    inner-train slice and the clf with early stopping on the inner-val — exactly the procedure
-    `run()` uses, so the returned (encoders, clf) reproduces the experiment. Shared by `run()` and
-    the serving artifact (dsm/serve.py)."""
+    Returns (encoders, clf, val_scores, y_val): the fitted encoders/classifier plus the held-out
+    inner-val raw scores and labels, which a caller can use to fit a probability calibrator without
+    any extra training. Carves a stratified inner-val from `train_df` for early stopping, fits the
+    encoders on the inner-train slice and the clf with early stopping on the inner-val."""
     from sklearn.model_selection import train_test_split
 
     y_train = train_df["label"].to_numpy(dtype=int)
@@ -133,7 +133,8 @@ def fit_encoders_clf(train_df, features, *, model: str = "xgb", seed: int = 0,
     spw = (len(y_inner) - n_pos) / n_pos if n_pos else 1.0
     clf = build_model(model, scale_pos_weight=spw, random_state=seed)
     clf.fit(X_inner, y_inner, X_val=X_val, y_val=y_val)
-    return encoders, clf
+    val_scores = clf.predict_proba(X_val)[:, 1]
+    return encoders, clf, val_scores, y_val
 
 
 def run(*, dataset_path: Path, features: list[str], out_path: Path,
@@ -144,8 +145,8 @@ def run(*, dataset_path: Path, features: list[str], out_path: Path,
     test_df = df[df["split"] == "test"].reset_index(drop=True)
     y_test = test_df["label"].to_numpy(dtype=int)
 
-    encoders, clf = fit_encoders_clf(train_df, features, model=model, seed=seed,
-                                     inner_val_size=inner_val_size)
+    encoders, clf, val_scores, y_val = fit_encoders_clf(
+        train_df, features, model=model, seed=seed, inner_val_size=inner_val_size)
     X_test = _matrix(encoders, test_df)
     y_proba = clf.predict_proba(X_test)[:, 1]
 
@@ -160,7 +161,38 @@ def run(*, dataset_path: Path, features: list[str], out_path: Path,
     m = metrics(y_test, y_proba)
     logger.info("%s on %s: ROC-AUC=%.4f PR-AUC=%.4f F1=%.4f -> %s",
                 model, dataset_path.stem, m["roc_auc"], m["pr_auc"], m["f1"], out_path)
+
+    _save_model(out_path.parent / "model.joblib", encoders, clf, features, train_df,
+                val_scores, y_val, y_test, y_proba, m["roc_auc"])
     return out_path
+
+
+def _save_model(path, encoders, clf, features, train_df, val_scores, y_val, y_test, y_proba,
+                roc_auc) -> None:
+    """Persist the fitted model for reloading (serving, re-scoring). Bundles an isotonic
+    calibrator fit on the held-out inner-val predictions — no extra training — and reports its
+    effect via the raw vs calibrated Brier on the test split."""
+    import joblib
+    from sklearn.isotonic import IsotonicRegression
+    from sklearn.metrics import brier_score_loss
+
+    calibrator = IsotonicRegression(out_of_bounds="clip").fit(val_scores, y_val)
+    payload = {
+        "encoders": encoders,
+        "clf": clf,
+        "calibrator": calibrator,
+        "features": list(features),
+        "base_rate": float(train_df["label"].mean()),
+        "metrics": {
+            "roc_auc": float(roc_auc),
+            "brier_raw": float(brier_score_loss(y_test, y_proba)),
+            "brier": float(brier_score_loss(y_test, calibrator.predict(y_proba))),
+            "n_test": int(len(y_test)),
+        },
+    }
+    joblib.dump(payload, path)
+    logger.info("saved model -> %s (Brier %.4f -> %.4f after calibration)",
+                path, payload["metrics"]["brier_raw"], payload["metrics"]["brier"])
 
 
 def _takes_y(encoder) -> bool:

@@ -1,13 +1,13 @@
-"""Serving layer for the molecule+disease model: build a persistent artifact and score one
+"""Serving layer for the molecule+disease model: load the saved experiment model and score one
 (SMILES, ICD-10) pair.
 
-The base model reproduces the `xgb_di_md` experiment exactly — same full train split, encoders, and
-classifier (via `fit_encoders_clf`) — so the raw score matches that experiment's saved
-`predictions.parquet`. An isotonic calibrator, fit on cross-validated out-of-fold train predictions
-(no data withheld from the final model, no leakage), is applied on top to produce a calibrated
-probability. Pure-python (no web deps); the FastAPI layer lives in `app.py`.
+The web tool serves the *exact* model trained by the `xgb_di_md` experiment — `dsm run xgb_di_md`
+persists `runs/xgb_di_md/model.joblib` (encoders + classifier + isotonic calibrator), and this
+module just loads it. No training happens here. Pure-python (no web deps); the FastAPI layer lives
+in `app.py`.
 
-    python -m dsm.serve        # (re)build runs/xgb_di_md/serve_artifact.joblib
+    uv run python -m dsm run xgb_di_md     # train + save the model the tool serves
+    uv run python -m dsm.serve             # sanity-check that the saved model loads
 """
 
 from __future__ import annotations
@@ -20,87 +20,24 @@ import numpy as np
 import pandas as pd
 
 from .config import PROJECT_ROOT
-from .datasets import materialize
-from .experiments import DATASETS
-from .models.sklearn_adapter import _matrix, fit_encoders_clf
 
 logger = logging.getLogger(__name__)
 
-FEATURES = ("molecule", "disease")            # the xgb_di_md feature set
-DATASET = "ours_di"
 RUNS_DIR = PROJECT_ROOT / "runs"
-ARTIFACT_PATH = RUNS_DIR / "xgb_di_md" / "serve_artifact.joblib"
+EXPERIMENT = "xgb_di_md"
+ARTIFACT_PATH = RUNS_DIR / EXPERIMENT / "model.joblib"
 
 _PREDICTOR: dict | None = None
 
 
-N_CALIB_FOLDS = 5   # CV folds for the out-of-fold predictions the calibrator is fit on
-
-
-def build_artifact(path: Path = ARTIFACT_PATH) -> Path:
-    """Dump a servable artifact: the full-train xgb_di_md model + an isotonic calibrator on top.
-
-    The final (encoders, clf) are fit on the FULL train split — identical to the experiment, so the
-    raw score matches its predictions.parquet. The calibrator is fit on cross-validated out-of-fold
-    predictions of train (each fold scored by a model trained on the other folds), which gives an
-    unbiased calibration map without withholding any data from the final model. Brier/ROC are
-    reported on the untouched test split."""
-    from sklearn.isotonic import IsotonicRegression
-    from sklearn.metrics import brier_score_loss, roc_auc_score
-    from sklearn.model_selection import StratifiedKFold
-
-    ds_path = materialize(DATASETS[DATASET])
-    df = pd.read_parquet(ds_path)
-    train_df = df[df["split"].isin(["train", "valid"])].reset_index(drop=True)
-    y_train = train_df["label"].to_numpy(dtype=int)
-
-    # Out-of-fold train predictions -> isotonic calibrator (no leakage into the final model).
-    oof = np.zeros(len(train_df), dtype=float)
-    skf = StratifiedKFold(n_splits=N_CALIB_FOLDS, shuffle=True, random_state=0)
-    for tr_idx, oof_idx in skf.split(np.arange(len(train_df)), y_train):
-        enc_f, clf_f = fit_encoders_clf(train_df.iloc[tr_idx].reset_index(drop=True), FEATURES)
-        oof_df = train_df.iloc[oof_idx].reset_index(drop=True)
-        oof[oof_idx] = clf_f.predict_proba(_matrix(enc_f, oof_df))[:, 1]
-    calibrator = IsotonicRegression(out_of_bounds="clip")
-    calibrator.fit(oof, y_train)
-
-    # Final model: the original xgb_di_md, fit on the full train split (untouched).
-    encoders, clf = fit_encoders_clf(train_df, FEATURES)
-
-    # Honest evaluation on the untouched test split: raw vs calibrated.
-    test_df = df[df["split"] == "test"].reset_index(drop=True)
-    y_test = test_df["label"].to_numpy(dtype=int)
-    raw_test = clf.predict_proba(_matrix(encoders, test_df))[:, 1]
-    cal_test = calibrator.predict(raw_test)
-    metrics = {
-        "roc_auc": float(roc_auc_score(y_test, raw_test)),  # unchanged by monotonic calibration
-        "brier_raw": float(brier_score_loss(y_test, raw_test)),
-        "brier": float(brier_score_loss(y_test, cal_test)),
-        "n_test": int(len(y_test)),
-    }
-
-    artifact = {
-        "encoders": encoders,
-        "clf": clf,
-        "calibrator": calibrator,
-        "features": list(FEATURES),
-        "base_rate": float(train_df["label"].mean()),
-        "metrics": metrics,
-    }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(artifact, path)
-    logger.info("wrote serving artifact -> %s (base_rate=%.4f, Brier %.4f -> %.4f after calibration)",
-                path, artifact["base_rate"], metrics["brier_raw"], metrics["brier"])
-    return path
-
-
 def load_predictor(path: Path = ARTIFACT_PATH) -> dict:
-    """Load (and cache) the artifact, building it on first use if absent."""
+    """Load (and cache) the saved experiment model. Raises if it hasn't been trained yet."""
     global _PREDICTOR
     if _PREDICTOR is None:
         if not path.exists():
-            logger.info("no artifact at %s — building it now", path)
-            build_artifact(path)
+            raise RuntimeError(
+                f"no saved model at {path} — train it first with "
+                f"`uv run python -m dsm run {EXPERIMENT}`")
         _PREDICTOR = joblib.load(path)
     return _PREDICTOR
 
@@ -113,10 +50,10 @@ def _disease_vocab(encoders) -> set[str]:
 
 
 def predict_one(smiles: str, icd_codes: list[str]) -> dict:
-    """Score one (SMILES, ICD-10 list) pair with the molecule+disease model.
+    """Score one (SMILES, ICD-10 list) pair with the saved molecule+disease model.
 
-    Returns the approval probability plus honest diagnostics: whether the SMILES parsed and how
-    many of the supplied ICD codes are in the model's learned vocabulary."""
+    Returns the calibrated approval probability (plus the raw model score) and honest diagnostics:
+    whether the SMILES parsed and how many ICD codes are in the model's learned vocabulary."""
     art = load_predictor()
     encoders = art["encoders"]
 
@@ -149,4 +86,6 @@ def predict_one(smiles: str, icd_codes: list[str]) -> dict:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    build_artifact()
+    art = load_predictor()
+    logger.info("loaded %s — features=%s metrics=%s", ARTIFACT_PATH, art.get("features"),
+                art.get("metrics"))
