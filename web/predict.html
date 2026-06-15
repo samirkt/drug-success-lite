@@ -45,6 +45,31 @@
                     padding: .25rem 0; cursor: pointer; }
   #icdcands input { width: auto; margin: 0; }
   #icdcands code { color: var(--accent); font-weight: 600; }
+  #cohort { display: none; }
+  .cohort-h { font-size: .8rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+              color: var(--muted); margin: 0 0 1rem; }
+  .stat { padding: .9rem 0; border-top: 1px solid var(--border); }
+  .stat:first-of-type { border-top: 0; padding-top: 0; }
+  .stat.off { opacity: .55; }
+  .stat-frac { font-size: 1.5rem; font-weight: 700; line-height: 1; }
+  .stat-frac .of { color: var(--muted); font-weight: 400; font-size: 1rem; }
+  .stat-line { margin: .15rem 0 0; }
+  .stat-sub { font-size: .82rem; color: var(--muted); margin-top: .4rem; }
+  .dots { display: flex; flex-wrap: wrap; gap: 5px; margin-top: .6rem; }
+  .dot { width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid var(--accent);
+         box-sizing: border-box; }
+  .dot.on { background: var(--accent); }
+  .stat .bar { margin: .6rem 0 .3rem; position: relative; }
+  .stat .bar > div { background: var(--accent); }
+  .basemark { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--muted);
+              opacity: .7; }
+  details.neigh { margin-top: .5rem; }
+  details.neigh summary { font-size: .82rem; color: var(--accent); cursor: pointer; }
+  .neigh table { width: 100%; border-collapse: collapse; font-size: .82rem; margin-top: .5rem; }
+  .neigh td { padding: .2rem 0; color: var(--fg); }
+  .neigh td.sim { color: var(--muted); text-align: right; width: 4rem; }
+  .neigh td.out { width: 1.5rem; text-align: right; }
+  .neigh .yes { color: #15803d; } .neigh .no { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -86,30 +111,145 @@
     <div class="diag" id="diag"></div>
   </div>
 
+  <div class="card" id="cohort">
+    <p class="cohort-h">Comparable programs in our dataset</p>
+
+    <div class="stat" id="stat-mol">
+      <div class="stat-frac"><span id="mol-x">–</span><span class="of"> of <span id="mol-n">–</span></span></div>
+      <div class="stat-line" id="mol-line"></div>
+      <div class="dots" id="mol-dots"></div>
+      <div class="stat-sub" id="mol-sub"></div>
+      <details class="neigh" id="mol-detw"><summary>show neighbors</summary><div id="mol-det"></div></details>
+    </div>
+
+    <div class="stat" id="stat-dis">
+      <div class="stat-frac"><span id="dis-x">–</span><span class="of"> of <span id="dis-n">–</span></span></div>
+      <div class="stat-line" id="dis-line"></div>
+      <div class="bar"><div id="dis-bar"></div><div class="basemark" id="dis-base"></div></div>
+      <div class="stat-sub" id="dis-sub"></div>
+    </div>
+
+    <div class="stat" id="stat-both">
+      <div class="stat-frac"><span id="both-x">–</span><span class="of"> of <span id="both-n">–</span></span></div>
+      <div class="stat-line" id="both-line"></div>
+      <div class="dots" id="both-dots"></div>
+      <div class="stat-sub" id="both-sub"></div>
+    </div>
+  </div>
+
   <p class="err" id="err"></p>
 </main>
 
 <script>
 const $ = (id) => document.getElementById(id);
 
+function postJSON(url, body) {
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    return r.json();
+  });
+}
+
 async function predict() {
   const smiles = $("smiles").value.trim();
   const icd_codes = $("icd").value.split(",").map(s => s.trim()).filter(Boolean);
   $("err").textContent = "";
   $("go").disabled = true; $("go").textContent = "Scoring…";
+  // Score and pull the dataset cohort concurrently — independent calls.
+  const cohort = postJSON("/cohort", { smiles, icd_codes })
+    .then(renderCohort)
+    .catch(() => { $("cohort").style.display = "none"; });
   try {
-    const resp = await fetch("/predict", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ smiles, icd_codes }),
-    });
-    if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
-    render(await resp.json());
+    render(await postJSON("/predict", { smiles, icd_codes }));
   } catch (e) {
     $("err").textContent = "Error: " + e.message;
   } finally {
+    await cohort;
     $("go").disabled = false; $("go").textContent = "Predict";
   }
+}
+
+function dotStrip(el, n, on) {
+  el.innerHTML = Array.from({ length: n }, (_, i) =>
+    `<span class="dot${i < on ? " on" : ""}"></span>`).join("");
+}
+
+function neighborTable(rows) {
+  return '<table>' + rows.map(r =>
+    `<tr><td>${r.drug_name}</td><td class="sim">${(r.similarity * 100).toFixed(0)}%</td>` +
+    `<td class="out ${r.approved ? "yes" : "no"}">${r.approved ? "✓" : "·"}</td></tr>`
+  ).join("") + '</table>';
+}
+
+function renderCohort(d) {
+  const pct = (x) => (x * 100).toFixed(0) + "%";
+
+  // Card 1 — molecular neighbors
+  const m = d.molecular;
+  const sm = $("stat-mol");
+  if (m.available && m.n > 0) {
+    sm.classList.remove("off");
+    $("mol-x").textContent = m.n_approved; $("mol-n").textContent = m.n;
+    $("mol-line").textContent =
+      `drugs similar to this molecule (Tanimoto ≥ ${d.threshold}) reached final approval`;
+    dotStrip($("mol-dots"), m.n, m.n_approved);
+    $("mol-sub").textContent = `${pct(m.n_approved / m.n)} of this molecule's nearest neighbors`;
+    $("mol-det").innerHTML = neighborTable(m.neighbors);
+    $("mol-detw").style.display = "";
+  } else {
+    sm.classList.add("off");
+    $("mol-x").textContent = "0"; $("mol-n").textContent = "0";
+    $("mol-line").textContent = m.available
+      ? `no dataset drugs above Tanimoto ${d.threshold} — this is a novel structure`
+      : "enter a valid SMILES to compare similar drugs";
+    $("mol-dots").innerHTML = ""; $("mol-sub").textContent = ""; $("mol-detw").style.display = "none";
+  }
+
+  // Card 2 — disease area
+  const dis = d.disease;
+  const sd = $("stat-dis");
+  if (dis.available && dis.n > 0) {
+    sd.classList.remove("off");
+    $("dis-x").textContent = dis.n_approved; $("dis-n").textContent = dis.n;
+    $("dis-line").textContent = "programs targeting this disease area reached final approval";
+    $("dis-bar").style.width = pct(dis.rate);
+    $("dis-base").style.left = pct(dis.base_rate);
+    $("dis-sub").innerHTML =
+      `${pct(dis.rate)} approved &nbsp;·&nbsp; dataset average ${pct(dis.base_rate)} (marker)`;
+  } else {
+    sd.classList.add("off");
+    $("dis-x").textContent = "0"; $("dis-n").textContent = "0";
+    $("dis-line").textContent = dis.available
+      ? "no programs in this disease area in our dataset"
+      : "enter an ICD-10 code to compare this disease area";
+    $("dis-bar").style.width = "0"; $("dis-base").style.left = "-10px"; $("dis-sub").textContent = "";
+  }
+
+  // Card 3 — similar drugs × this disease
+  const b = d.both;
+  const sb = $("stat-both");
+  if (b.available && b.n > 0) {
+    sb.classList.remove("off");
+    $("both-x").textContent = b.n_approved; $("both-n").textContent = b.n;
+    $("both-line").textContent = "similar drugs tested on this disease were approved";
+    dotStrip($("both-dots"), b.n, b.n_approved);
+    $("both-sub").innerHTML = b.drugs.length
+      ? "incl. " + b.drugs.slice(0, 4).map(x => x.drug_name).join(", ")
+      : "";
+  } else {
+    sb.classList.add("off");
+    $("both-x").textContent = "0"; $("both-n").textContent = "0";
+    $("both-line").textContent = b.available
+      ? "no similar drugs were tested on this disease in our dataset"
+      : "needs both a valid SMILES and an ICD-10 code";
+    $("both-dots").innerHTML = ""; $("both-sub").textContent = "";
+  }
+
+  $("cohort").style.display = "block";
 }
 
 function render(d) {

@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from dsm.cohort import cohort_stats, load_cohort
 from dsm.resolve import resolve_disease, resolve_drug
 from dsm.serve import load_predictor, predict_one
 
@@ -30,6 +31,7 @@ class PredictRequest(BaseModel):
 @app.on_event("startup")
 def _warmup() -> None:
     load_predictor()  # build/load the artifact once at startup
+    load_cohort()     # build the dataset cohort (fingerprint matrix) once at startup
 
 
 @app.get("/")
@@ -42,6 +44,14 @@ def predict(req: PredictRequest) -> dict:
     try:
         return predict_one(req.smiles, req.icd_codes)
     except Exception as exc:  # surface featurization/model errors as 400s
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/cohort")
+def cohort(req: PredictRequest) -> dict:
+    try:
+        return cohort_stats(req.smiles, req.icd_codes)
+    except Exception as exc:  # surface cohort/featurization errors as 400s
         raise HTTPException(status_code=400, detail=str(exc))
 
 

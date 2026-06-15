@@ -1,13 +1,13 @@
 """Serving layer for the molecule+disease model: load the saved experiment model and score one
 (SMILES, ICD-10) pair.
 
-The web tool serves the *exact* model trained by the `xgb_di_md` experiment — `dsm run xgb_di_md`
-persists `runs/xgb_di_md/model.joblib` (encoders + classifier + isotonic calibrator), and this
-module just loads it. No training happens here. Pure-python (no web deps); the FastAPI layer lives
-in `app.py`.
+The web tool serves the *exact* model trained by the `abl_md` experiment — `dsm run abl_md`
+persists `runs/abl_md/model.joblib` (encoders + classifier + calibrator), and this module just
+loads it. No training happens here. Pure-python (no web deps); the FastAPI layer lives in
+`app.py`.
 
-    uv run python -m dsm run xgb_di_md     # train + save the model the tool serves
-    uv run python -m dsm.serve             # sanity-check that the saved model loads
+    uv run python -m dsm run abl_md     # train + save the model the tool serves
+    uv run python -m dsm.serve         # sanity-check that the saved model loads
 """
 
 from __future__ import annotations
