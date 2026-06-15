@@ -19,6 +19,7 @@ chemap/results/
 # Run outputs.
 runs/
 runs_old/
+runs_final/
 
 # Python / uv.
 .venv/
