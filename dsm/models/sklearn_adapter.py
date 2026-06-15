@@ -111,14 +111,35 @@ def _matrix(encoders: list, df: pd.DataFrame) -> np.ndarray:
     return np.hstack(blocks)
 
 
-def fit_encoders_clf(train_df, features, *, model: str = "xgb", seed: int = 0,
-                     inner_val_size: float = 0.1):
-    """Fit feature encoders + classifier on a train frame.
+class FeaturePipeline:
+    """Encoders (+ optional per-group PCA) -> feature matrix. Picklable, so it travels in the saved
+    model and rebuilds the exact serving input for a single example."""
 
-    Returns (encoders, clf, val_scores, y_val): the fitted encoders/classifier plus the held-out
-    inner-val raw scores and labels, which a caller can use to fit a probability calibrator without
-    any extra training. Carves a stratified inner-val from `train_df` for early stopping, fits the
-    encoders on the inner-train slice and the clf with early stopping on the inner-val."""
+    def __init__(self, encoders, pcas=None):
+        self.encoders = encoders
+        self.pcas = pcas  # list aligned to encoders, or None for raw (full-dimensional) features
+
+    def transform(self, df) -> np.ndarray:
+        blocks = []
+        for i, e in enumerate(self.encoders):
+            b = e.transform(df)
+            if self.pcas is not None:
+                b = self.pcas[i].transform(b)
+            blocks.append(b)
+        blocks = [b for b in blocks if b.shape[1] > 0]
+        if not blocks:
+            raise ValueError("no feature group produced any columns")
+        return np.hstack(blocks).astype(np.float32)
+
+
+def fit_encoders_clf(train_df, features, *, model: str = "xgb", seed: int = 0,
+                     inner_val_size: float = 0.1, pca: int | None = None):
+    """Fit a feature pipeline + classifier on a train frame.
+
+    Returns (pipeline, clf, val_scores, y_val): the fitted FeaturePipeline/classifier plus the
+    held-out inner-val raw scores and labels, which a caller can use to fit a probability calibrator
+    without extra training. Carves a stratified inner-val for early stopping; fits encoders (and,
+    when `pca` is set, a per-group PCA-<pca> bottleneck) on the inner-train slice."""
     from sklearn.model_selection import train_test_split
 
     y_train = train_df["label"].to_numpy(dtype=int)
@@ -133,29 +154,41 @@ def fit_encoders_clf(train_df, features, *, model: str = "xgb", seed: int = 0,
     encoders = _make_encoders(features, train_df)
     for e in encoders:
         e.fit(inner_df, y_inner) if _takes_y(e) else e.fit(inner_df)
-    X_inner = _matrix(encoders, inner_df)
-    X_val = _matrix(encoders, val_df)
-    logger.info("features %s -> X_inner=%s", features, X_inner.shape)
+
+    pcas = None
+    if pca:
+        from sklearn.decomposition import PCA
+        pcas = []
+        for e in encoders:
+            mat = e.transform(inner_df)
+            p = PCA(n_components=min(pca, mat.shape[1]), random_state=seed)
+            p.fit(mat)
+            pcas.append(p)
+    pipeline = FeaturePipeline(encoders, pcas)
+
+    X_inner = pipeline.transform(inner_df)
+    X_val = pipeline.transform(val_df)
+    logger.info("features %s -> X_inner=%s (pca=%s)", features, X_inner.shape, pca)
 
     n_pos = int(y_inner.sum())
     spw = (len(y_inner) - n_pos) / n_pos if n_pos else 1.0
     clf = build_model(model, scale_pos_weight=spw, random_state=seed)
     clf.fit(X_inner, y_inner, X_val=X_val, y_val=y_val)
     val_scores = clf.predict_proba(X_val)[:, 1]
-    return encoders, clf, val_scores, y_val
+    return pipeline, clf, val_scores, y_val
 
 
 def run(*, dataset_path: Path, features: list[str], out_path: Path,
         model: str = "xgb", seed: int = 0, inner_val_size: float = 0.1,
-        **_ignored) -> Path:
+        pca: int | None = None, **_ignored) -> Path:
     df = pd.read_parquet(dataset_path)
     train_df = df[df["split"].isin(["train", "valid"])].reset_index(drop=True)
     test_df = df[df["split"] == "test"].reset_index(drop=True)
     y_test = test_df["label"].to_numpy(dtype=int)
 
-    encoders, clf, val_scores, y_val = fit_encoders_clf(
-        train_df, features, model=model, seed=seed, inner_val_size=inner_val_size)
-    X_test = _matrix(encoders, test_df)
+    pipeline, clf, val_scores, y_val = fit_encoders_clf(
+        train_df, features, model=model, seed=seed, inner_val_size=inner_val_size, pca=pca)
+    X_test = pipeline.transform(test_df)
     y_proba = clf.predict_proba(X_test)[:, 1]
 
     preds = pd.DataFrame({
@@ -170,12 +203,12 @@ def run(*, dataset_path: Path, features: list[str], out_path: Path,
     logger.info("%s on %s: ROC-AUC=%.4f PR-AUC=%.4f F1=%.4f -> %s",
                 model, dataset_path.stem, m["roc_auc"], m["pr_auc"], m["f1"], out_path)
 
-    _save_model(out_path.parent / "model.joblib", encoders, clf, features, train_df,
+    _save_model(out_path.parent / "model.joblib", pipeline, clf, features, train_df,
                 val_scores, y_val, y_test, y_proba, m["roc_auc"])
     return out_path
 
 
-def _save_model(path, encoders, clf, features, train_df, val_scores, y_val, y_test, y_proba,
+def _save_model(path, pipeline, clf, features, train_df, val_scores, y_val, y_test, y_proba,
                 roc_auc) -> None:
     """Persist the fitted model for reloading (serving, re-scoring). Bundles an isotonic
     calibrator fit on the held-out inner-val predictions — no extra training — and reports its
@@ -186,7 +219,7 @@ def _save_model(path, encoders, clf, features, train_df, val_scores, y_val, y_te
 
     calibrator = IsotonicRegression(out_of_bounds="clip").fit(val_scores, y_val)
     payload = {
-        "encoders": encoders,
+        "pipeline": pipeline,
         "clf": clf,
         "calibrator": calibrator,
         "features": list(features),

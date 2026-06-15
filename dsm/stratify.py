@@ -17,11 +17,11 @@ import json
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import average_precision_score, precision_recall_curve, roc_auc_score
+from sklearn.metrics import average_precision_score, roc_auc_score
 
 from .config import PROJECT_ROOT
 from .datasets import materialize
-from .evaluate import _bootstrap_metric_ci
+from .evaluate import _bootstrap_metric_ci, _max_f1
 from .experiments import DATASETS, EXPERIMENTS
 
 RUNS_DIR = PROJECT_ROOT / "runs"
@@ -78,16 +78,12 @@ def strat_metrics(y, proba, *, bootstrap_ci: int = 0) -> dict:
         return {**base, "roc_auc": float("nan"), "pr_auc": float("nan"),
                 "f1": float("nan"), "f1_threshold": float("nan")}
 
-    prec, rec, thr = precision_recall_curve(y, proba)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        f1s = np.nan_to_num(2 * prec * rec / (prec + rec))
-    best = int(np.argmax(f1s))
-    f1_threshold = float(thr[best]) if best < len(thr) else 1.0
+    f1, f1_threshold = _max_f1(y, proba)
     out = {
         **base,
         "roc_auc": float(roc_auc_score(y, proba)),
         "pr_auc": float(average_precision_score(y, proba)),
-        "f1": float(f1s[best]),
+        "f1": f1,
         "f1_threshold": f1_threshold,
     }
     if bootstrap_ci > 0:

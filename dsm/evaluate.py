@@ -61,6 +61,19 @@ def _bootstrap_metric_ci(
     return out
 
 
+def _max_f1(y_true, y_proba) -> tuple[float, float]:
+    """Best achievable F1 over all thresholds, and the threshold that attains it. Single source of
+    truth for the F1 reported by both `metrics` (results) and `stratify` (ablation)."""
+    from sklearn.metrics import precision_recall_curve
+
+    prec, rec, thr = precision_recall_curve(y_true, y_proba)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        f1s = np.nan_to_num(2 * prec * rec / (prec + rec))
+    best = int(np.argmax(f1s))
+    threshold = float(thr[best]) if best < len(thr) else 1.0
+    return float(f1s[best]), threshold
+
+
 def metrics(
     y_true,
     y_proba,
@@ -74,18 +87,20 @@ def metrics(
         balanced_accuracy_score,
         brier_score_loss,
         confusion_matrix,
-        f1_score,
         log_loss,
         roc_auc_score,
     )
 
     y_true = np.asarray(y_true).astype(int)
     y_proba = np.asarray(y_proba).astype(float)
-    y_pred = (y_proba >= threshold).astype(int)
+    y_pred = (y_proba >= threshold).astype(int)  # operating point for confusion / balanced-accuracy
 
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
     tn, fp, fn, tp = cm.ravel()
     multiclass = len(set(y_true.tolist())) > 1
+
+    # F1 is reported as max-F1 (best threshold), matching `stratify`/`dsm ablation`.
+    f1, f1_threshold = _max_f1(y_true, y_proba) if multiclass else (float("nan"), float("nan"))
 
     out = {
         "n": int(len(y_true)),
@@ -93,20 +108,23 @@ def metrics(
         "n_neg": int((1 - y_true).sum()),
         "roc_auc": float(roc_auc_score(y_true, y_proba)) if multiclass else float("nan"),
         "pr_auc": float(average_precision_score(y_true, y_proba)) if multiclass else float("nan"),
-        "f1": float(f1_score(y_true, y_pred)),
+        "f1": f1,
+        "f1_threshold": f1_threshold,
         "brier": float(brier_score_loss(y_true, y_proba)),
         "log_loss": float(log_loss(y_true, np.clip(y_proba, 1e-7, 1 - 1e-7))) if multiclass else float("nan"),
         "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
-        "threshold": float(threshold),
+        "threshold": float(threshold),  # operating point for confusion matrix / balanced-accuracy
         "tp": int(tp),
         "fp": int(fp),
         "tn": int(tn),
         "fn": int(fn),
     }
     if bootstrap_ci > 0:
+        # F1 CI at its max-F1 threshold (matches stratify); ROC/PR CIs are threshold-free.
+        ci_threshold = f1_threshold if f1_threshold == f1_threshold else threshold
         out.update(
             _bootstrap_metric_ci(
-                y_true, y_proba, n_boot=bootstrap_ci, seed=ci_seed, threshold=threshold,
+                y_true, y_proba, n_boot=bootstrap_ci, seed=ci_seed, threshold=ci_threshold,
             )
         )
     return out

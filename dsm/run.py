@@ -53,6 +53,7 @@ def run_experiment(
         native_benchmark=spec.native_benchmark,
         epochs=epochs or spec.epochs,
         class_weight=spec.class_weight,
+        pca=spec.pca,
     )
 
     payload = {

@@ -24,7 +24,7 @@ from .config import PROJECT_ROOT
 logger = logging.getLogger(__name__)
 
 RUNS_DIR = PROJECT_ROOT / "runs"
-EXPERIMENT = "xgb_di_md"
+EXPERIMENT = "abl_md"   # PCA-50 molecule+disease — the model the web tool serves
 ARTIFACT_PATH = RUNS_DIR / EXPERIMENT / "model.joblib"
 
 _PREDICTOR: dict | None = None
@@ -66,7 +66,7 @@ def predict_one(smiles: str, icd_codes: list[str]) -> dict:
     Returns the calibrated approval probability (plus the raw model score) and honest diagnostics:
     whether the SMILES parsed and how many ICD codes are in the model's learned vocabulary."""
     art = load_predictor()
-    encoders = art["encoders"]
+    pipeline = art["pipeline"]
 
     smiles = (smiles or "").strip()
     codes = [c.strip() for c in (icd_codes or []) if c and c.strip()]
@@ -74,7 +74,7 @@ def predict_one(smiles: str, icd_codes: list[str]) -> dict:
         "smiles": [[smiles] if smiles else []],
         "icd_codes": [codes],
     })
-    X = np.hstack([e.transform(row) for e in encoders])
+    X = pipeline.transform(row)
     raw = float(art["clf"].predict_proba(X)[0, 1])
     calibrator = art.get("calibrator")
     proba = float(calibrator.predict([raw])[0]) if calibrator is not None else raw
@@ -89,7 +89,7 @@ def predict_one(smiles: str, icd_codes: list[str]) -> dict:
         "base_rate": art.get("base_rate"),
         "smiles_valid": smiles_valid,
         "n_icd_total": len(codes),
-        "n_icd_in_vocab": _n_in_vocab(encoders, codes),
+        "n_icd_in_vocab": _n_in_vocab(pipeline.encoders, codes),
         "model": art.get("metrics", {}),
     }
 

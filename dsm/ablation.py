@@ -1,9 +1,11 @@
-"""Single-group feature ablation of the headline xgb model, on seen vs unseen drugs.
+"""PCA-50 feature ablation of the headline xgb model, on seen vs unseen drugs.
 
-Trains XGBoost on each feature group ALONE (molecule/disease/admet/target/pathway),
-evaluates every variant on all/seen/unseen drugs, and reports each against the full
-5-group model (`xgb_di_2019`). A group strong on UNSEEN drugs genuinely generalizes;
-a group strong only on SEEN drugs is memorization-driven.
+All cells share one representation — PCA-50 per feature group, category-level ICD disease —
+so they're directly comparable. Two views in one table: single-group cells (each group ALONE:
+molecule/disease/admet/target/pathway, plus the raw target-gene multi-hot) and cumulative cells
+(molecule+disease, then +each group). Every variant is evaluated on all/seen/unseen drugs and
+reported against the full 5-group model (`abl_mdtpa`). A group strong on UNSEEN drugs genuinely
+generalizes; a group strong only on SEEN drugs is memorization-driven.
 
 Composes the existing pipeline — `run.run_experiment` (train -> predictions) and
 `stratify.stratify_experiment` (seen/unseen + max-F1) — it adds no modeling code.
@@ -18,9 +20,10 @@ from . import run as run_mod
 from . import stratify as strat
 from .experiments import ALL_GROUPS
 
-FULL = "xgb_di_2019"                       # 5-group baseline (Δ reference)
-# single-group variants: the 5 ALL_GROUPS + the alternate raw target-gene multi-hot.
-FAMILY = [f"abl_{g}" for g in ALL_GROUPS] + ["abl_target_genes"]
+FULL = "abl_mdtpa"                         # PCA-50 5-group model (Δ reference)
+# single-group cells (5 groups + raw target-gene multi-hot) and cumulative cells (md -> +group).
+FAMILY = ([f"abl_{g}" for g in ALL_GROUPS] + ["abl_target_genes"]
+          + ["abl_md", "abl_mda", "abl_mdp", "abl_mdt", "abl_mdtp"])
 STRATA = ("all", "seen", "unseen")
 _METRICS = ("roc_auc", "pr_auc", "f1")
 
