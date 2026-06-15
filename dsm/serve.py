@@ -42,11 +42,22 @@ def load_predictor(path: Path = ARTIFACT_PATH) -> dict:
     return _PREDICTOR
 
 
-def _disease_vocab(encoders) -> set[str]:
+def _disease_encoder(encoders):
     for e in encoders:
         if getattr(e, "column", None) == "icd_codes":
-            return set(e.vocab)
-    return set()
+            return e
+    return None
+
+
+def _n_in_vocab(encoders, codes: list[str]) -> int:
+    """How many entered ICD codes the model actually has signal for — applying the encoder's own
+    token_fn (e.g. 3-char category truncation) before checking the learned vocabulary."""
+    enc = _disease_encoder(encoders)
+    if enc is None:
+        return 0
+    toks = enc._token_fn(codes) if getattr(enc, "_token_fn", None) else codes
+    vocab = set(enc.vocab)
+    return sum(1 for t in toks if t in vocab)
 
 
 def predict_one(smiles: str, icd_codes: list[str]) -> dict:
@@ -71,7 +82,6 @@ def predict_one(smiles: str, icd_codes: list[str]) -> dict:
     from rdkit import Chem, RDLogger
     RDLogger.DisableLog("rdApp.*")
     smiles_valid = bool(smiles) and Chem.MolFromSmiles(smiles) is not None
-    vocab = _disease_vocab(encoders)
 
     return {
         "approval_probability": proba,
@@ -79,7 +89,7 @@ def predict_one(smiles: str, icd_codes: list[str]) -> dict:
         "base_rate": art.get("base_rate"),
         "smiles_valid": smiles_valid,
         "n_icd_total": len(codes),
-        "n_icd_in_vocab": sum(1 for c in codes if c in vocab),
+        "n_icd_in_vocab": _n_in_vocab(encoders, codes),
         "model": art.get("metrics", {}),
     }
 

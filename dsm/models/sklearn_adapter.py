@@ -67,6 +67,12 @@ class MoleculeFP:
         return [f"ecfp4_{i}" for i in range(ECFP_BITS)] + [f"maccs_{i}" for i in range(MACCS_BITS)]
 
 
+def _icd_category(codes: list[str]) -> list[str]:
+    """ICD-10 codes -> their 3-char category (the part before the dot): 'K51.90' -> 'K51'.
+    Module-level (not a lambda) so the fitted encoder stays picklable for serving."""
+    return [c.split(".")[0] for c in codes]
+
+
 def _make_encoders(features: list[str], df: pd.DataFrame) -> list:
     """Map requested feature names to encoders, dispatching on available columns."""
     encs = []
@@ -75,9 +81,11 @@ def _make_encoders(features: list[str], df: pd.DataFrame) -> list:
         if n in ("molecule", "mol"):
             encs.append(MoleculeFP())
         elif n in ("disease", "icd"):
-            # ICD-code multi-hot everywhere: disease_area is uninformative and the MeSH tree is
-            # incomplete, so the old DiseaseGroup (disease_area + MeSH) is intentionally not used.
-            encs.append(MultiHot("icd_codes", prefix="icd", top_k=200))
+            # ICD-code multi-hot everywhere, truncated to the 3-char category (e.g. K51.90 -> K51)
+            # so coverage is robust to subcode choice — full-resolution codes are too sparse (6k+
+            # distinct, ~97% out of a top-200 vocab), which made distinct diseases collapse to the
+            # same "other" bucket. disease_area / MeSH are intentionally not used.
+            encs.append(MultiHot("icd_codes", prefix="icd", top_k=200, token_fn=_icd_category))
         elif n in ("admet", "target", "pathway", "target_genes"):
             if not _group_available(n, df):
                 raise ValueError(
