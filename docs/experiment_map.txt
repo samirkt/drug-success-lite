@@ -18,7 +18,7 @@ hint_bench_p1_repro/p2_repro/p3_repro  HINT with mol+disease+criteria on its nat
 
 === Single-group ablations (XGBoost, ours_di; baseline = xgb_di_2019) ===
 abl_molecule       Molecule group alone — standalone predictive power of structure (ECFP4+MACCS).
-abl_disease        Disease group alone — standalone power of MeSH/disease-area features.
+abl_disease        Disease group alone — standalone power of the ICD-code multi-hot.
 abl_admet          ADMET group alone — standalone power of the DrugBank ADMET percentiles.
 abl_target         Target group alone — standalone power of the engineered OpenTargets target features.
 abl_pathway        Pathway group alone — standalone power of the Reactome pathway features.

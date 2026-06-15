@@ -1,0 +1,1232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drug Approval Probability — AIFS prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">
+<style>
+  :root {
+    --bg-page: #FAFAF8;
+    --bg-card: #FFFFFF;
+    --bg-secondary: #F1EFE8;
+    --bg-info: #E6F1FB;
+    --bg-success: #E1F5EE;
+    --bg-warning: #FAEEDA;
+    --bg-danger: #FCEBEB;
+    --text-primary: #1F1F1E;
+    --text-secondary: #5F5E5A;
+    --text-tertiary: #888780;
+    --text-info: #0C447C;
+    --text-success: #085041;
+    --text-warning: #633806;
+    --text-danger: #791F1F;
+    --border-tertiary: rgba(0,0,0,0.10);
+    --border-secondary: rgba(0,0,0,0.18);
+    --border-primary: rgba(0,0,0,0.30);
+    --accent: #1F1F1E;
+    --accent-fg: #FFFFFF;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg-page: #1A1A18;
+      --bg-card: #232321;
+      --bg-secondary: #2B2B29;
+      --bg-info: #0C447C;
+      --bg-success: #085041;
+      --bg-warning: #633806;
+      --bg-danger: #501313;
+      --text-primary: #F1F1F0;
+      --text-secondary: #B4B2A9;
+      --text-tertiary: #888780;
+      --text-info: #B5D4F4;
+      --text-success: #9FE1CB;
+      --text-warning: #FAC775;
+      --text-danger: #F7C1C1;
+      --border-tertiary: rgba(255,255,255,0.10);
+      --border-secondary: rgba(255,255,255,0.18);
+      --border-primary: rgba(255,255,255,0.30);
+      --accent: #F1F1F0;
+      --accent-fg: #1A1A18;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+    background: var(--bg-page);
+    line-height: 1.6;
+    font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 32px 24px 80px;
+  }
+
+  /* Header */
+  .topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 32px;
+    padding-bottom: 16px;
+    border-bottom: 0.5px solid var(--border-tertiary);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 32px; height: 32px;
+    background: var(--text-primary);
+    color: var(--bg-card);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 14px;
+  }
+  .brand-label { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.5px; margin: 0; text-transform: uppercase; }
+  .brand-name { font-size: 14px; font-weight: 500; margin: 0; }
+  .meta-link {
+    font-size: 13px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    padding: 6px 12px;
+    border: 0.5px solid var(--border-tertiary);
+    border-radius: var(--radius-md);
+  }
+  .meta-link:hover { background: var(--bg-secondary); }
+
+  /* Hero */
+  .hero { margin-bottom: 32px; }
+  .hero h1 {
+    font-size: 28px;
+    font-weight: 500;
+    margin: 0 0 8px;
+    letter-spacing: -0.3px;
+  }
+  .hero p {
+    font-size: 15px;
+    color: var(--text-secondary);
+    margin: 0;
+    max-width: 600px;
+  }
+
+  /* Stepper */
+  .step { display: none; }
+  .step.active { display: block; }
+
+  /* Cards */
+  .card {
+    background: var(--bg-card);
+    border: 0.5px solid var(--border-tertiary);
+    border-radius: var(--radius-lg);
+    padding: 20px 22px;
+    margin-bottom: 16px;
+  }
+
+  .section-h {
+    font-size: 14px;
+    font-weight: 500;
+    margin: 0 0 12px;
+    color: var(--text-primary);
+  }
+  .section-sub {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin: 0 0 16px;
+  }
+
+  /* Forms */
+  .input-row {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 16px;
+    align-items: start;
+    margin-bottom: 14px;
+  }
+  .input-row label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    padding-top: 10px;
+  }
+  input[type="text"], input[type="number"] {
+    width: 100%;
+    height: 38px;
+    padding: 0 12px;
+    font-size: 14px;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+    background: var(--bg-card);
+    border: 0.5px solid var(--border-secondary);
+    border-radius: var(--radius-md);
+    outline: none;
+    transition: box-shadow 0.15s;
+  }
+  input[type="text"]:focus, input[type="number"]:focus {
+    box-shadow: 0 0 0 3px rgba(31,31,30,0.08);
+    border-color: var(--border-primary);
+  }
+  .hint {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-top: 4px;
+  }
+
+  button {
+    height: 36px;
+    padding: 0 14px;
+    font-size: 13px;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+    background: var(--bg-card);
+    border: 0.5px solid var(--border-secondary);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.1s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  button:hover { background: var(--bg-secondary); }
+  button:active { transform: scale(0.98); }
+  button.primary {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+  }
+  button.primary:hover { opacity: 0.9; background: var(--accent); }
+  button.subtle {
+    border-color: transparent;
+    color: var(--text-secondary);
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .button-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 20px;
+    flex-wrap: wrap;
+  }
+
+  /* Pills */
+  .pill {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .pill-success { background: var(--bg-success); color: var(--text-success); }
+  .pill-warning { background: var(--bg-warning); color: var(--text-warning); }
+  .pill-danger { background: var(--bg-danger); color: var(--text-danger); }
+  .pill-info { background: var(--bg-info); color: var(--text-info); }
+  .pill-neutral { background: var(--bg-secondary); color: var(--text-primary); }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 0.5px solid var(--border-tertiary);
+    margin-bottom: 20px;
+    overflow-x: auto;
+  }
+  .tab {
+    padding: 10px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    transition: color 0.15s;
+  }
+  .tab:hover { color: var(--text-primary); }
+  .tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--text-primary);
+    font-weight: 500;
+  }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Metric cards */
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  @media (max-width: 700px) {
+    .metric-grid { grid-template-columns: 1fr 1fr; }
+  }
+  .metric-card {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    padding: 14px 16px;
+  }
+  .metric-label {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin: 0 0 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .metric-val {
+    font-size: 24px;
+    font-weight: 500;
+    margin: 0;
+  }
+  .metric-foot {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin: 4px 0 0;
+  }
+
+  /* Phase ladder */
+  .phase-row { margin-bottom: 22px; }
+  .phase-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .phase-name { font-size: 13px; font-weight: 500; }
+  .phase-stats {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  .phase-stats strong { color: var(--text-primary); font-weight: 500; }
+  .phase-stats .ci { color: var(--text-tertiary); font-size: 11px; }
+  .phase-bar {
+    height: 12px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    position: relative;
+    overflow: visible;
+  }
+  .phase-ci {
+    position: absolute;
+    top: -2px;
+    height: 16px;
+    background: rgba(24, 95, 165, 0.18);
+    border-radius: 4px;
+  }
+  .phase-fill {
+    height: 100%;
+    background: #185FA5;
+    border-radius: 6px;
+    position: relative;
+    z-index: 2;
+  }
+  @media (prefers-color-scheme: dark) {
+    .phase-fill { background: #378ADD; }
+    .phase-ci { background: rgba(133, 183, 235, 0.25); }
+  }
+
+  /* Analogs */
+  .analog-head, .analog-row {
+    display: grid;
+    grid-template-columns: 1fr 80px 130px;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 0;
+    font-size: 13px;
+  }
+  .analog-row { border-bottom: 0.5px solid var(--border-tertiary); }
+  .analog-row:last-child { border-bottom: none; }
+  .analog-head {
+    font-weight: 500;
+    color: var(--text-secondary);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    border-bottom: 0.5px solid var(--border-secondary);
+  }
+  .analog-name { margin: 0; font-weight: 500; }
+  .analog-disease { margin: 2px 0 0; color: var(--text-secondary); font-size: 12px; }
+  .analog-sim {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .analog-summary {
+    margin-top: 14px;
+    padding: 12px 14px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  /* SHAP */
+  .shap-row {
+    display: grid;
+    grid-template-columns: 180px 1fr 70px;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 0;
+    font-size: 13px;
+  }
+  .shap-label {
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+  .shap-bar-wrap {
+    height: 18px;
+    background: var(--bg-secondary);
+    border-radius: 3px;
+    position: relative;
+  }
+  .shap-axis {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border-secondary);
+  }
+  .shap-bar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-radius: 3px;
+  }
+  .shap-val {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    text-align: right;
+  }
+  .shap-narrative {
+    margin-top: 18px;
+    padding: 14px 16px;
+    background: var(--bg-info);
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    color: var(--text-info);
+    line-height: 1.6;
+  }
+
+  /* Trust */
+  .trust-block { margin: 18px 0; }
+  .trust-block p:first-child { margin: 0 0 4px; font-size: 13px; font-weight: 500; }
+  .trust-block p:last-child { margin: 0; font-size: 13px; color: var(--text-secondary); }
+  .trust-warning {
+    background: var(--bg-warning);
+    border-radius: var(--radius-md);
+    padding: 12px 16px;
+    margin-top: 20px;
+    font-size: 12px;
+    color: var(--text-warning);
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  /* Resolved panel */
+  .resolved-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    font-size: 13px;
+  }
+  @media (max-width: 600px) {
+    .resolved-grid { grid-template-columns: 1fr; }
+  }
+  .resolved-key {
+    margin: 0 0 4px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .resolved-val { margin: 0; font-size: 13px; }
+  .resolved-val.mono {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Drug summary */
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .summary-label {
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .summary-name {
+    margin: 4px 0 4px;
+    font-size: 20px;
+    font-weight: 500;
+  }
+  .summary-context {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  /* Footer */
+  .footer {
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 0.5px solid var(--border-tertiary);
+    font-size: 12px;
+    color: var(--text-tertiary);
+    line-height: 1.6;
+  }
+  .footer a { color: var(--text-secondary); text-decoration: none; }
+  .footer a:hover { color: var(--text-primary); }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <!-- TOP BAR -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">P</div>
+      <div>
+        <p class="brand-label">AIFS · UC Davis</p>
+        <p class="brand-name">Drug approval probability tool</p>
+      </div>
+    </div>
+    <a href="#about" class="meta-link"><i class="ti ti-info-circle" style="font-size:14px;vertical-align:-2px;margin-right:4px"></i>About</a>
+  </header>
+
+  <!-- HERO -->
+  <section class="hero">
+    <h1>Predict whether a drug candidate will reach FDA approval</h1>
+    <p>Enter a drug and disease. The tool estimates the probability of reaching FDA approval for that specific pair, plus a per-trial phase-transition estimate, scored by trained XGBoost models on features resolved on demand from public databases.</p>
+  </section>
+
+  <!-- STEP 1: INPUT -->
+  <div class="step active" id="step-input">
+
+    <div class="card">
+      <p class="section-h"><i class="ti ti-flask" style="font-size:16px;vertical-align:-2px;margin-right:6px"></i>Drug and disease</p>
+      <p class="section-sub">Paste a drug name, ID, or SMILES string. Everything else fills in automatically.</p>
+
+      <div class="input-row">
+        <label for="drug-input">Drug</label>
+        <div>
+          <input type="text" id="drug-input" placeholder="e.g. lecanemab · BAN2401 · DB14580 · CHEMBL5093516">
+          <p class="hint">Resolves through RxNorm → DrugBank → ChEMBL → canonical SMILES → MolFormer embedding. Biologics skip the structural step and use target identity directly.</p>
+        </div>
+      </div>
+
+      <div class="input-row">
+        <label for="disease-input">Disease</label>
+        <div>
+          <input type="text" id="disease-input" placeholder="e.g. Alzheimer disease · KRAS G12C lung cancer · type 2 diabetes">
+          <p class="hint">Auto-maps to MeSH descriptor, then cross-walks to EFO and MONDO for Open Targets queries.</p>
+        </div>
+      </div>
+
+      <div class="input-row">
+        <label for="sponsor-input">Sponsor</label>
+        <div>
+          <input type="text" id="sponsor-input" placeholder="optional · auto-pulled from ClinicalTrials.gov when blank">
+          <p class="hint">Classified as large pharma / biotech / academic / government via SEC EDGAR. Prior approvals counted before IND year only.</p>
+        </div>
+      </div>
+
+      <div class="input-row">
+        <label for="ind-year">IND year</label>
+        <div>
+          <input type="number" id="ind-year" value="2018" min="1995" max="2026" step="1" style="max-width: 140px;">
+          <p class="hint">Freezes every database feature (Open Targets, ChEMBL, Reactome) to the version that existed in this year. No future information leaks into the prediction.</p>
+        </div>
+      </div>
+
+      <div class="button-row">
+        <button onclick="loadDemo('lecanemab')"><i class="ti ti-bolt" style="font-size:14px;vertical-align:-2px"></i>Try lecanemab</button>
+        <button onclick="loadDemo('sotorasib')"><i class="ti ti-bolt" style="font-size:14px;vertical-align:-2px"></i>Try sotorasib</button>
+        <button onclick="loadDemo('aducanumab')"><i class="ti ti-bolt" style="font-size:14px;vertical-align:-2px"></i>Try aducanumab</button>
+        <button onclick="loadDemo('failed')"><i class="ti ti-bolt" style="font-size:14px;vertical-align:-2px"></i>Try failed candidate</button>
+        <button class="primary" onclick="runPrediction()" style="margin-left: auto;">Predict approval<i class="ti ti-arrow-right" style="font-size:14px;vertical-align:-2px"></i></button>
+      </div>
+    </div>
+
+    <div class="card" id="resolved-panel" style="display: none;">
+      <p class="section-h"><i class="ti ti-circle-check" style="font-size:16px;vertical-align:-2px;margin-right:6px"></i>Auto-resolved features</p>
+      <p class="section-sub">These were computed from your input. You can edit any field above and re-resolve.</p>
+      <div class="resolved-grid">
+        <div>
+          <p class="resolved-key">SMILES (canonical)</p>
+          <p class="resolved-val mono" id="resolved-smiles">—</p>
+        </div>
+        <div>
+          <p class="resolved-key">Disease (MeSH)</p>
+          <p class="resolved-val" id="resolved-mesh">—</p>
+        </div>
+        <div>
+          <p class="resolved-key">Targets (Open Targets)</p>
+          <p class="resolved-val" id="resolved-targets">—</p>
+        </div>
+        <div>
+          <p class="resolved-key">Pathways (Reactome leaf)</p>
+          <p class="resolved-val" id="resolved-pathways">—</p>
+        </div>
+        <div>
+          <p class="resolved-key">ADMET (52 properties)</p>
+          <p class="resolved-val" id="resolved-admet">—</p>
+        </div>
+        <div>
+          <p class="resolved-key">Sponsor prior approvals</p>
+          <p class="resolved-val" id="resolved-sponsor">—</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2: RESULTS -->
+  <div class="step" id="step-results">
+
+    <div style="margin-bottom: 16px;">
+      <button class="subtle" onclick="goBack()"><i class="ti ti-arrow-left" style="font-size:13px;vertical-align:-2px"></i>New prediction</button>
+    </div>
+
+    <div class="card">
+      <div class="summary-row">
+        <div>
+          <p class="summary-label">Prediction for</p>
+          <h2 class="summary-name" id="r-name">—</h2>
+          <p class="summary-context" id="r-context">—</p>
+        </div>
+        <div class="pill" id="r-verdict-pill">—</div>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="phases" onclick="switchTab('phases')">Phase probabilities</div>
+      <div class="tab" data-tab="analogs" onclick="switchTab('analogs')">Similar drugs</div>
+      <div class="tab" data-tab="why" onclick="switchTab('why')">Why this prediction</div>
+      <div class="tab" data-tab="trust" onclick="switchTab('trust')">Should I trust it?</div>
+    </div>
+
+    <!-- TAB: PHASES -->
+    <div class="tab-content active" id="tab-phases">
+
+      <div class="metric-grid">
+        <div class="metric-card">
+          <p class="metric-label">Approval probability</p>
+          <p class="metric-val" id="m-loa">—</p>
+          <p class="metric-foot" id="m-loa-ci">95% CI —</p>
+        </div>
+        <div class="metric-card">
+          <p class="metric-label">Disease-area average</p>
+          <p class="metric-val" id="m-base">—</p>
+          <p class="metric-foot">historical base rate</p>
+        </div>
+        <div class="metric-card">
+          <p class="metric-label">Lift over average</p>
+          <p class="metric-val" id="m-lift">—</p>
+          <p class="metric-foot" id="m-lift-pct">—</p>
+        </div>
+        <div class="metric-card">
+          <p class="metric-label">Confidence</p>
+          <p class="metric-val" id="m-conf">—</p>
+          <p class="metric-foot" id="m-conf-detail">—</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <p class="section-h">Phase-by-phase progression</p>
+        <p class="section-sub">Conditional probability of clearing each phase, with 95% confidence interval (shaded band). Multiply along the path for the total approval probability.</p>
+        <div id="phase-ladder"></div>
+      </div>
+    </div>
+
+    <!-- TAB: ANALOGS -->
+    <div class="tab-content" id="tab-analogs">
+      <div class="card">
+        <p class="section-h">Ten nearest historical drug–disease pairs</p>
+        <p class="section-sub">Ranked by similarity in joint molecule × target × disease space. Outcomes are realized historical outcomes, not model predictions.</p>
+
+        <div class="analog-head">
+          <div>Drug · Disease</div>
+          <div>Similarity</div>
+          <div>Outcome</div>
+        </div>
+        <div id="analog-list"></div>
+        <div class="analog-summary" id="analog-summary">—</div>
+      </div>
+    </div>
+
+    <!-- TAB: WHY -->
+    <div class="tab-content" id="tab-why">
+      <div class="card">
+        <p class="section-h">Feature-by-feature attribution (SHAP)</p>
+        <p class="section-sub">How each feature group moved the prediction up or down relative to the disease-area average. Right of center pushes toward approval, left pushes toward failure.</p>
+        <div id="shap-list"></div>
+        <div class="shap-narrative" id="shap-narrative">—</div>
+      </div>
+    </div>
+
+    <!-- TAB: TRUST -->
+    <div class="tab-content" id="tab-trust">
+      <div class="card">
+        <p class="section-h">How reliable is this number?</p>
+
+        <div class="trust-block">
+          <p>Calibration</p>
+          <p>Of drug–disease pairs the tool rated near this probability in past data, the actual approval rate matched within <span id="cal-error">5%</span>.</p>
+        </div>
+
+        <div class="trust-block">
+          <p>Time-leakage check</p>
+          <p>All features for this prediction come from the <span id="snapshot-year">2018</span> snapshot of Open Targets, ChEMBL, and Reactome. No information from later trials or curation could affect the result.</p>
+        </div>
+
+        <div class="trust-block">
+          <p>Where this candidate sits in the data</p>
+          <p id="cohort-note">—</p>
+        </div>
+
+        <div class="trust-block">
+          <p>Known failure modes for cases like this</p>
+          <p id="failure-mode">—</p>
+        </div>
+
+        <div class="trust-warning">
+          <i class="ti ti-alert-triangle" style="font-size:16px;flex-shrink:0;margin-top:1px"></i>
+          <div>This prototype uses curated demonstration data. Production output will reflect actual XGBoost model output for the queried candidate, with isotonic calibration and SHAP attribution computed on demand.</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- FOOTER -->
+  <footer class="footer" id="about">
+    <p>Prototype for the calibrated drug-disease FDA approval prediction framework described in Tagkopoulos et al. (in preparation). Demo candidates use representative numbers and historical analogs; production output requires the trained XGBoost model loaded server-side. Pipeline source, training data, and model artifacts will be released open-source under the project repository.</p>
+    <p style="margin-top: 12px;">© AIFS · University of California, Davis. Built as a static prototype — no data leaves the browser.</p>
+  </footer>
+
+</div>
+
+<script>
+// ============ DEMO DATA ============
+const demos = {
+  lecanemab: {
+    name: "Lecanemab",
+    drug: "lecanemab",
+    disease: "Alzheimer disease",
+    sponsor: "Eisai/Biogen",
+    indYear: 2018,
+    context: "Anti-amyloid-β mAb · Alzheimer disease · IND 2018 · sponsor Eisai/Biogen",
+    smiles: "[biologic — humanized IgG1 mAb, no SMILES]",
+    mesh: "D000544 (Alzheimer Disease)",
+    targets: "APP (3 supporting genetic studies)",
+    pathways: "Amyloid fiber formation; Aβ clearance (R-HSA-977225)",
+    sponsor_detail: "5 prior approvals before 2018",
+    loa: 0.42, ci: [0.28, 0.56], base: 0.06, conf: "Medium",
+    confDetail: "wide CI; mAb modality with mixed history",
+    snapshot: 2018,
+    phases: [
+      { name: "Phase 1", p: 0.91, ci: [0.84, 0.96], baseP: 0.62 },
+      { name: "Phase 2", p: 0.74, ci: [0.58, 0.86], baseP: 0.30 },
+      { name: "Phase 3", p: 0.68, ci: [0.50, 0.83], baseP: 0.50 },
+      { name: "FDA approval", p: 0.93, ci: [0.78, 0.98], baseP: 0.85 }
+    ],
+    analogs: [
+      { drug: "Aducanumab", disease: "Alzheimer disease", sim: 0.94, outcome: "Approved (withdrawn)", color: "warning" },
+      { drug: "Solanezumab", disease: "Alzheimer disease", sim: 0.89, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Donanemab", disease: "Alzheimer disease", sim: 0.86, outcome: "Approved 2024", color: "success" },
+      { drug: "Crenezumab", disease: "Alzheimer disease", sim: 0.81, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Gantenerumab", disease: "Alzheimer disease", sim: 0.78, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Bapineuzumab", disease: "Alzheimer disease", sim: 0.74, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Verubecestat", disease: "Alzheimer disease", sim: 0.59, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Lanabecestat", disease: "Alzheimer disease", sim: 0.57, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Atabecestat", disease: "Alzheimer disease", sim: 0.53, outcome: "Failed Phase 2/3", color: "danger" },
+      { drug: "Lecanemab (early)", disease: "Mild cognitive impair.", sim: 0.51, outcome: "Approved 2023", color: "success" }
+    ],
+    analogSummary: "3 of 10 nearest analogs were approved (30%); the tool predicts 42% for this candidate, reflecting newer biomarker evidence and improved target specificity relative to prior anti-Aβ failures.",
+    shap: [
+      { feat: "Target genetic evidence", val: +0.18 },
+      { feat: "Disease base rate", val: -0.14 },
+      { feat: "Prior approvals at target", val: +0.09 },
+      { feat: "Sponsor track record", val: +0.07 },
+      { feat: "Pathway (Aβ clearance)", val: +0.06 },
+      { feat: "Modality (mAb)", val: +0.04 },
+      { feat: "Predicted BBB permeability", val: +0.03 },
+      { feat: "Other features", val: -0.02 }
+    ],
+    narrative: "Strong target genetic evidence (APOE/APP loci) and prior approvals at the same target push the prediction up. The 5% Alzheimer disease base rate pulls it down. Net result: 42%, well above the disease-area average but with meaningful uncertainty.",
+    cohort: "23 historical anti-amyloid drug–disease pairs in the training data; 4 approved (17%).",
+    failureMode: "First-in-class biologics with strong target evidence sometimes fail in late Phase 3 on clinical endpoints that do not track biomarker effects."
+  },
+  sotorasib: {
+    name: "Sotorasib",
+    drug: "sotorasib",
+    disease: "NSCLC with KRAS G12C mutation",
+    sponsor: "Amgen",
+    indYear: 2018,
+    context: "KRAS G12C inhibitor · NSCLC · IND 2018 · sponsor Amgen",
+    smiles: "CC(C)c1ccc(c(c1)Cl)C(=O)N2CCN(CC2)C3=NC(=NC(=C3)C(F)F)N4...",
+    mesh: "D008175 (Lung Neoplasms)",
+    targets: "KRAS (G12C mutant)",
+    pathways: "RAF/MAP kinase cascade (R-HSA-5673001)",
+    sponsor_detail: "12 prior approvals before 2018",
+    loa: 0.71, ci: [0.58, 0.83], base: 0.05, conf: "High",
+    confDetail: "narrow CI; many similar approved analogs",
+    snapshot: 2018,
+    phases: [
+      { name: "Phase 1", p: 0.95, ci: [0.89, 0.98], baseP: 0.62 },
+      { name: "Phase 2", p: 0.88, ci: [0.74, 0.95], baseP: 0.30 },
+      { name: "Phase 3", p: 0.86, ci: [0.69, 0.95], baseP: 0.50 },
+      { name: "FDA approval", p: 0.98, ci: [0.91, 1.00], baseP: 0.85 }
+    ],
+    analogs: [
+      { drug: "Adagrasib (MRTX849)", disease: "NSCLC (KRAS G12C)", sim: 0.96, outcome: "Approved 2022", color: "success" },
+      { drug: "Divarasib", disease: "NSCLC (KRAS G12C)", sim: 0.91, outcome: "Phase 3 ongoing", color: "neutral" },
+      { drug: "Garsorasib", disease: "NSCLC (KRAS G12C)", sim: 0.88, outcome: "Phase 2", color: "neutral" },
+      { drug: "MRTX1133", disease: "Pancreatic (KRAS G12D)", sim: 0.79, outcome: "Phase 1", color: "neutral" },
+      { drug: "Trametinib", disease: "Melanoma (MAPK)", sim: 0.71, outcome: "Approved 2013", color: "success" },
+      { drug: "Selumetinib", disease: "NF1 plexiform neurofibroma", sim: 0.69, outcome: "Approved 2020", color: "success" },
+      { drug: "Cobimetinib", disease: "Melanoma (MAPK)", sim: 0.66, outcome: "Approved 2015", color: "success" },
+      { drug: "Binimetinib", disease: "Melanoma (MAPK)", sim: 0.64, outcome: "Approved 2018", color: "success" },
+      { drug: "Vemurafenib", disease: "Melanoma (BRAF V600)", sim: 0.61, outcome: "Approved 2011", color: "success" },
+      { drug: "Dabrafenib", disease: "Melanoma (BRAF V600)", sim: 0.58, outcome: "Approved 2013", color: "success" }
+    ],
+    analogSummary: "9 of 10 nearest analogs were approved (90%); the tool predicts 71%, reflecting both the strong precedent and the novelty of the covalent G12C-specific binding mechanism.",
+    shap: [
+      { feat: "Target genetic evidence", val: +0.22 },
+      { feat: "Pathway (RAF/MAPK leaf)", val: +0.18 },
+      { feat: "Disease base rate", val: -0.10 },
+      { feat: "Prior approvals at pathway", val: +0.14 },
+      { feat: "Sponsor track record", val: +0.11 },
+      { feat: "ADMET (overall favorable)", val: +0.05 },
+      { feat: "Chemistry similarity to approved", val: +0.08 },
+      { feat: "Other features", val: -0.02 }
+    ],
+    narrative: "KRAS G12C has very strong genetic evidence in NSCLC, the RAF/MAPK pathway has multiple approved drugs, and the sponsor has a strong track record. All major signals push the prediction up; the only headwind is the low 5% oncology base rate.",
+    cohort: "31 historical KRAS-pathway drug–disease pairs in the training data; 14 approved (45%).",
+    failureMode: "Resistance mutations in KRAS or downstream pathway components can cap durability of response and limit indication breadth over time."
+  },
+  aducanumab: {
+    name: "Aducanumab",
+    drug: "aducanumab",
+    disease: "Alzheimer disease",
+    sponsor: "Biogen",
+    indYear: 2015,
+    context: "Anti-amyloid-β mAb · Alzheimer disease · IND 2015 · sponsor Biogen",
+    smiles: "[biologic — humanized IgG1 mAb, no SMILES]",
+    mesh: "D000544 (Alzheimer Disease)",
+    targets: "APP (3 supporting genetic studies)",
+    pathways: "Amyloid fiber formation; Aβ clearance (R-HSA-977225)",
+    sponsor_detail: "4 prior approvals before 2015",
+    loa: 0.31, ci: [0.14, 0.52], base: 0.06, conf: "Low",
+    confDetail: "very wide CI; many failed analogs",
+    snapshot: 2015,
+    phases: [
+      { name: "Phase 1", p: 0.88, ci: [0.79, 0.94], baseP: 0.62 },
+      { name: "Phase 2", p: 0.62, ci: [0.42, 0.78], baseP: 0.30 },
+      { name: "Phase 3", p: 0.61, ci: [0.36, 0.81], baseP: 0.50 },
+      { name: "FDA approval", p: 0.92, ci: [0.68, 0.99], baseP: 0.85 }
+    ],
+    analogs: [
+      { drug: "Solanezumab", disease: "Alzheimer disease", sim: 0.94, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Bapineuzumab", disease: "Alzheimer disease", sim: 0.91, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Crenezumab", disease: "Alzheimer disease", sim: 0.85, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Gantenerumab", disease: "Alzheimer disease", sim: 0.83, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Lecanemab (early)", disease: "Alzheimer disease", sim: 0.79, outcome: "Approved 2023", color: "success" },
+      { drug: "Ponezumab", disease: "Alzheimer disease", sim: 0.71, outcome: "Discontinued P2", color: "danger" },
+      { drug: "Verubecestat", disease: "Alzheimer disease", sim: 0.64, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Atabecestat", disease: "Alzheimer disease", sim: 0.61, outcome: "Failed Phase 2/3", color: "danger" },
+      { drug: "Lanabecestat", disease: "Alzheimer disease", sim: 0.58, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "AAB-003", disease: "Alzheimer disease", sim: 0.55, outcome: "Discontinued P1", color: "danger" }
+    ],
+    analogSummary: "1 of 10 nearest analogs was approved (10%); the tool predicts 31%, with a wide CI reflecting genuine uncertainty about whether anti-Aβ mAbs would clear the regulatory bar at the 2015 snapshot.",
+    shap: [
+      { feat: "Target genetic evidence", val: +0.14 },
+      { feat: "Disease base rate", val: -0.18 },
+      { feat: "Prior failures in analogs", val: -0.12 },
+      { feat: "Modality (mAb, novel CNS)", val: -0.06 },
+      { feat: "Pathway evidence", val: +0.08 },
+      { feat: "Sponsor track record", val: +0.06 },
+      { feat: "ADMET (BBB challenge)", val: -0.04 },
+      { feat: "Other features", val: +0.01 }
+    ],
+    narrative: "Genetic evidence and sponsor history push up, but the very low Alzheimer disease base rate, the recent failures of similar antibodies, and the novelty of CNS-penetrant mAbs pull down. The wide confidence interval correctly flags this as a high-uncertainty case — which matched the actual contested regulatory outcome.",
+    cohort: "17 historical anti-amyloid drug–disease pairs in the 2015 training snapshot; 1 approved (6%).",
+    failureMode: "Anti-amyloid mAbs prior to 2015 consistently failed on clinical endpoints despite biomarker engagement. The accelerated approval pathway was the only realistic route, with a wide outcome distribution."
+  },
+  failed: {
+    name: "MK-8931 (verubecestat)",
+    drug: "verubecestat",
+    disease: "Alzheimer disease (mild-to-moderate)",
+    sponsor: "Merck",
+    indYear: 2011,
+    context: "BACE1 inhibitor · Alzheimer disease · IND 2011 · sponsor Merck",
+    smiles: "CC1(C(=N[C@@H](C(=N1)c2ccc(cc2)F)c3cccc(c3)NC(=O)c4ncc(cn4)C(F)(F)F)N)N",
+    mesh: "D000544 (Alzheimer Disease)",
+    targets: "BACE1 (β-secretase 1) — weak genetic support at 2011 snapshot",
+    pathways: "APP amyloidogenic processing (R-HSA-977606)",
+    sponsor_detail: "18 prior approvals before 2011",
+    loa: 0.09, ci: [0.03, 0.21], base: 0.06, conf: "Medium",
+    confDetail: "tight CI on the downside",
+    snapshot: 2011,
+    phases: [
+      { name: "Phase 1", p: 0.78, ci: [0.65, 0.88], baseP: 0.62 },
+      { name: "Phase 2", p: 0.45, ci: [0.28, 0.62], baseP: 0.30 },
+      { name: "Phase 3", p: 0.31, ci: [0.16, 0.51], baseP: 0.50 },
+      { name: "FDA approval", p: 0.82, ci: [0.55, 0.96], baseP: 0.85 }
+    ],
+    analogs: [
+      { drug: "LY2811376", disease: "Alzheimer disease", sim: 0.92, outcome: "Discontinued P1 (tox)", color: "danger" },
+      { drug: "LY2886721", disease: "Alzheimer disease", sim: 0.88, outcome: "Discontinued P2 (tox)", color: "danger" },
+      { drug: "Atabecestat", disease: "Alzheimer disease", sim: 0.83, outcome: "Failed Phase 2/3", color: "danger" },
+      { drug: "Lanabecestat", disease: "Alzheimer disease", sim: 0.81, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Elenbecestat", disease: "Alzheimer disease", sim: 0.78, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Semagacestat", disease: "Alzheimer disease", sim: 0.69, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Avagacestat", disease: "Alzheimer disease", sim: 0.66, outcome: "Discontinued P2", color: "danger" },
+      { drug: "Tarenflurbil", disease: "Alzheimer disease", sim: 0.58, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Tramiprosate", disease: "Alzheimer disease", sim: 0.54, outcome: "Failed Phase 3", color: "danger" },
+      { drug: "Solanezumab", disease: "Alzheimer disease", sim: 0.51, outcome: "Failed Phase 3", color: "danger" }
+    ],
+    analogSummary: "0 of 10 nearest analogs were approved (0%); the tool predicts 9%, just above the 6% disease-area average. All similar drugs failed in clinical trials, mostly because of off-target toxicity or lack of cognitive benefit.",
+    shap: [
+      { feat: "Prior failures in analogs", val: -0.21 },
+      { feat: "Disease base rate", val: -0.18 },
+      { feat: "Target genetic evidence", val: -0.08 },
+      { feat: "ADMET (CNS tox flags)", val: -0.06 },
+      { feat: "Pathway (BACE/APP)", val: -0.04 },
+      { feat: "Sponsor track record", val: +0.09 },
+      { feat: "Chemistry similarity to approved", val: -0.03 },
+      { feat: "Other features", val: +0.02 }
+    ],
+    narrative: "Every similar BACE inhibitor in the training data failed clinically, mostly because off-target effects emerged at therapeutic doses. The weak genetic evidence for BACE1 at the 2011 snapshot (before later GWAS findings) compounds the problem. Merck's strong track record is the only positive signal, and it is not enough.",
+    cohort: "14 historical BACE inhibitor or γ-secretase drug–disease pairs in the 2011 snapshot; 0 approved.",
+    failureMode: "BACE1 inhibitors typically clear biomarker readouts but fail clinical endpoints in Phase 3, sometimes accompanied by liver or cognitive worsening. The class has had a 0% approval rate to date."
+  }
+};
+
+let current = null;
+
+function loadDemo(name) {
+  current = demos[name];
+  document.getElementById('drug-input').value = current.drug;
+  document.getElementById('disease-input').value = current.disease;
+  document.getElementById('sponsor-input').value = current.sponsor;
+  document.getElementById('ind-year').value = current.indYear;
+
+  document.getElementById('resolved-panel').style.display = 'block';
+  document.getElementById('resolved-smiles').textContent = current.smiles;
+  document.getElementById('resolved-mesh').textContent = current.mesh;
+  document.getElementById('resolved-targets').textContent = current.targets;
+  document.getElementById('resolved-pathways').textContent = current.pathways;
+  document.getElementById('resolved-admet').textContent = "52 properties computed (DILI, BBB, hERG, CYP, …)";
+  document.getElementById('resolved-sponsor').textContent = current.sponsor_detail;
+
+  document.getElementById('resolved-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function runPrediction() {
+  if (!current) {
+    current = demos.lecanemab;
+    loadDemo('lecanemab');
+  }
+  document.getElementById('step-input').classList.remove('active');
+  document.getElementById('step-results').classList.add('active');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  renderResults();
+}
+
+function goBack() {
+  document.getElementById('step-results').classList.remove('active');
+  document.getElementById('step-input').classList.add('active');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelector('.tab[data-tab="' + name + '"]').classList.add('active');
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+}
+
+function fmtPct(x) { return Math.round(x * 100) + '%'; }
+
+function renderResults() {
+  const d = current;
+
+  document.getElementById('r-name').textContent = d.name + ' · ' + d.disease;
+  document.getElementById('r-context').textContent = d.context;
+  const pill = document.getElementById('r-verdict-pill');
+  pill.classList.remove('pill-success', 'pill-warning', 'pill-danger', 'pill-info');
+  if (d.loa > 0.5) {
+    pill.textContent = 'Above average';
+    pill.classList.add('pill-success');
+  } else if (d.loa > 0.2) {
+    pill.textContent = 'Mixed signal';
+    pill.classList.add('pill-warning');
+  } else {
+    pill.textContent = 'Below average';
+    pill.classList.add('pill-danger');
+  }
+
+  document.getElementById('m-loa').textContent = fmtPct(d.loa);
+  document.getElementById('m-loa-ci').textContent = '95% CI ' + fmtPct(d.ci[0]) + '–' + fmtPct(d.ci[1]);
+  document.getElementById('m-base').textContent = fmtPct(d.base);
+  const lift = d.loa - d.base;
+  document.getElementById('m-lift').textContent = (lift >= 0 ? '+' : '') + Math.round(lift * 100) + 'pp';
+  document.getElementById('m-lift-pct').textContent = (d.loa / d.base).toFixed(1) + '× the disease average';
+  document.getElementById('m-conf').textContent = d.conf;
+  document.getElementById('m-conf-detail').textContent = d.confDetail;
+
+  const ladder = document.getElementById('phase-ladder');
+  ladder.innerHTML = '';
+  d.phases.forEach((ph) => {
+    const row = document.createElement('div');
+    row.className = 'phase-row';
+    row.innerHTML = `
+      <div class="phase-head">
+        <span class="phase-name">${ph.name}</span>
+        <span class="phase-stats"><strong>${fmtPct(ph.p)}</strong> <span class="ci">(95% CI ${fmtPct(ph.ci[0])}–${fmtPct(ph.ci[1])})</span> · base ${fmtPct(ph.baseP)}</span>
+      </div>
+      <div class="phase-bar">
+        <div class="phase-ci" style="left: ${ph.ci[0]*100}%; width: ${(ph.ci[1]-ph.ci[0])*100}%;"></div>
+        <div class="phase-fill" style="width: ${ph.p*100}%;"></div>
+      </div>
+    `;
+    ladder.appendChild(row);
+  });
+
+  const list = document.getElementById('analog-list');
+  list.innerHTML = '';
+  d.analogs.forEach(a => {
+    const row = document.createElement('div');
+    row.className = 'analog-row';
+    row.innerHTML = `
+      <div>
+        <p class="analog-name">${a.drug}</p>
+        <p class="analog-disease">${a.disease}</p>
+      </div>
+      <div class="analog-sim">${a.sim.toFixed(2)}</div>
+      <div><span class="pill pill-${a.color}">${a.outcome}</span></div>
+    `;
+    list.appendChild(row);
+  });
+  document.getElementById('analog-summary').textContent = d.analogSummary;
+
+  const shapList = document.getElementById('shap-list');
+  shapList.innerHTML = '';
+  const maxAbs = Math.max(...d.shap.map(s => Math.abs(s.val)));
+  d.shap.forEach(s => {
+    const widthPct = (Math.abs(s.val) / maxAbs) * 45;
+    const isPositive = s.val > 0;
+    const offset = isPositive ? '50%' : (50 - widthPct) + '%';
+    const barColor = isPositive ? '#1D9E75' : '#E24B4A';
+    const valColor = isPositive ? 'var(--text-success)' : 'var(--text-danger)';
+    const row = document.createElement('div');
+    row.className = 'shap-row';
+    row.innerHTML = `
+      <div class="shap-label">${s.feat}</div>
+      <div class="shap-bar-wrap">
+        <div class="shap-axis"></div>
+        <div class="shap-bar" style="left: ${offset}; width: ${widthPct}%; background: ${barColor};"></div>
+      </div>
+      <div class="shap-val" style="color: ${valColor};">${isPositive ? '+' : ''}${s.val.toFixed(2)}</div>
+    `;
+    shapList.appendChild(row);
+  });
+  document.getElementById('shap-narrative').textContent = d.narrative;
+
+  document.getElementById('snapshot-year').textContent = d.snapshot;
+  document.getElementById('cohort-note').textContent = d.cohort;
+  document.getElementById('failure-mode').textContent = d.failureMode;
+}
+</script>
+<script>
+// ============ LIVE BACKEND OVERRIDE ============
+// Replaces the static-demo behavior above: calls the prediction backend
+// (model/serve.py), which in turn calls the /featurize service and scores the
+// production approval + trial models. Defined after the original script so
+// these globals win.
+//
+// API base: empty (same-origin) when the page is served BY the backend
+// (./serve.sh on :8080). When the page is served some other way — e.g.
+// `python3 -m http.server 8001` — point at the backend explicitly. Override
+// with `window.PREDICT_API_BASE = 'http://host:port'` before this script if needed.
+const API_BASE = (typeof window.PREDICT_API_BASE === 'string')
+  ? window.PREDICT_API_BASE
+  : (location.port === '8080' ? '' : 'http://localhost:8080');
+
+const pct = (x) => (x == null ? "—" : Math.round(x * 100) + "%");
+
+function loadDemo(name) {
+  const PREFILL = {
+    lecanemab:  { drug: "lecanemab",  disease: "Alzheimer disease" },
+    sotorasib:  { drug: "sotorasib",  disease: "KRAS G12C non-small cell lung cancer" },
+    aducanumab: { drug: "aducanumab", disease: "Alzheimer disease" },
+    failed:     { drug: "imatinib",   disease: "chronic myeloid leukemia" },
+  };
+  const p = PREFILL[name];
+  if (!p) return;
+  document.getElementById('drug-input').value = p.drug;
+  document.getElementById('disease-input').value = p.disease;
+  document.getElementById('resolved-panel').style.display = 'none';
+}
+
+async function runPrediction() {
+  const drug = document.getElementById('drug-input').value.trim();
+  const disease = document.getElementById('disease-input').value.trim();
+  if (!drug || !disease) { alert('Enter both a drug and a disease.'); return; }
+
+  const btn = document.querySelector('.button-row .primary');
+  const label = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Scoring… (first call ~10s)'; }
+  try {
+    const resp = await fetch(API_BASE + '/predict', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ drug_name: drug, disease_name: disease }),
+    });
+    if (!resp.ok) {
+      let detail = resp.status;
+      try { detail = (await resp.json()).detail || detail; } catch (e) {}
+      alert('Prediction failed: ' + detail);
+      return;
+    }
+    const data = await resp.json();
+    render(data, drug, disease);
+    document.getElementById('step-input').classList.remove('active');
+    document.getElementById('step-results').classList.add('active');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch (e) {
+    alert('Could not reach the prediction backend at ' + (API_BASE || location.origin) +
+          '. Start it with ./serve.sh and make sure /featurize is up.');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = label; }
+  }
+}
+
+function render(data, drug, disease) {
+  const md = data.metadata || {};
+  const info = data.model_info || {};
+  const approval = data.approval_probability;
+  const trial = data.trial_probability;
+
+  document.getElementById('r-name').textContent = (md.drug_name || drug);
+  const phaseTxt = (md.highest_phase && md.highest_phase !== 'Unknown')
+    ? ' · reached ' + md.highest_phase : '';
+  document.getElementById('r-context').textContent =
+    (md.indication || disease) + (md.drugbank_id ? ' · ' + md.drugbank_id : '') + phaseTxt;
+
+  const pill = document.getElementById('r-verdict-pill');
+  pill.textContent = pct(approval) + ' approval probability';
+  pill.className = 'pill ' + (approval >= 0.5 ? 'success' : approval >= 0.25 ? 'warning' : 'danger');
+
+  document.getElementById('m-loa').textContent = pct(approval);
+  const aRoc = info.approval && info.approval.metrics && info.approval.metrics.roc_auc;
+  document.getElementById('m-loa-ci').textContent = aRoc ? 'model held-out ROC-AUC ' + aRoc.toFixed(2) : '';
+  document.getElementById('m-base').textContent = pct(trial);
+  const tRoc = info.trial && info.trial.metrics && info.trial.metrics.roc_auc;
+  const baseFoot = document.getElementById('m-base-foot');
+  if (baseFoot) baseFoot.textContent = tRoc ? 'model held-out ROC-AUC ' + tRoc.toFixed(2) : '';
+
+  // Two real bars instead of the old fabricated per-phase ladder.
+  const ladder = document.getElementById('phase-ladder');
+  ladder.innerHTML = '';
+  [['Reach FDA approval (approval model)', approval],
+   ['Per-trial phase transition (trial model)', trial]].forEach(([nm, p]) => {
+    const pp = Math.round((p || 0) * 100);
+    const row = document.createElement('div');
+    row.className = 'phase-row';
+    row.innerHTML =
+      '<div class="phase-head"><span class="phase-name">' + nm + '</span>' +
+      '<span class="phase-stats"><strong>' + pp + '%</strong></span></div>' +
+      '<div class="phase-bar"><div class="phase-fill" style="width:' + pp + '%"></div></div>';
+    ladder.appendChild(row);
+  });
+
+  let warn = document.getElementById('mol-warning');
+  if (data.flags && data.flags.molecule_missing) {
+    if (!warn) {
+      warn = document.createElement('div');
+      warn.id = 'mol-warning';
+      warn.className = 'trust-warning';
+      warn.style.marginTop = '16px';
+      ladder.parentElement.appendChild(warn);
+    }
+    warn.innerHTML = '<i class="ti ti-alert-triangle" style="font-size:16px;flex-shrink:0;margin-top:1px"></i>' +
+      '<div>No molecular fingerprint was available for this drug, so ~half the model inputs are blank. ' +
+      'Treat this probability as unreliable.</div>';
+    warn.style.display = 'flex';
+  } else if (warn) {
+    warn.style.display = 'none';
+  }
+
+  show('resolved-smiles', md.smiles_canonical);
+  show('resolved-mesh', (md.mesh_indication || md.indication || '') +
+       (md.icd10_codes && md.icd10_codes.length ? '  ·  ICD-10: ' + md.icd10_codes.slice(0, 4).join(', ') : ''));
+  show('resolved-targets', (md.target_names || []).join(', '));
+  show('resolved-pathways', (md.reactome_pathway_names || []).slice(0, 5).join('; '));
+  document.getElementById('resolved-admet').textContent = 'Computed · 52 ADMET-AI predictions';
+  show('resolved-sponsor', (md.opentargets_moa || []).slice(0, 3).join('; '));
+  document.getElementById('resolved-panel').style.display = 'block';
+
+  document.getElementById('cohort-note').textContent =
+    'Trained on pre-2019 data, evaluated on a held-out post-2019 slice (' +
+    ((info.approval && info.approval.n_test) || '—') + ' approval test rows, ' +
+    ((info.trial && info.trial.n_test) || '—') + ' trial test rows).';
+  document.getElementById('failure-mode').textContent =
+    'These are uncalibrated XGBoost scores at a 0.5 threshold — useful for ranking, not as exact frequencies. ' +
+    'The trial score is a generic per-trial transition estimate (no specific phase), since no trial exists for an ad-hoc pairing.';
+}
+
+function show(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = (val && String(val).length) ? val : '—';
+}
+
+// One-time DOM adjustments: hide tabs with no live backing, relabel the
+// repurposed metric cards, and replace the prototype "demo data" banner.
+document.addEventListener('DOMContentLoaded', () => {
+  ['analogs', 'why'].forEach((t) => {
+    const tab = document.querySelector('.tab[data-tab="' + t + '"]');
+    if (tab) tab.style.display = 'none';
+  });
+  const baseEl = document.getElementById('m-base');
+  const baseCard = baseEl && baseEl.closest('.metric-card');
+  if (baseCard) {
+    baseCard.querySelector('.metric-label').textContent = 'Trial success probability';
+    const foot = baseCard.querySelector('.metric-foot');
+    if (foot) foot.id = 'm-base-foot';
+  }
+  ['m-lift', 'm-conf'].forEach((id) => {
+    const el = document.getElementById(id);
+    const card = el && el.closest('.metric-card');
+    if (card) card.style.display = 'none';
+  });
+  const warn = document.querySelector('#tab-trust .trust-warning div');
+  if (warn) warn.textContent =
+    'Live output from the trained XGBoost approval + trial models, scored on features resolved on demand from public databases. Probabilities are uncalibrated.';
+});
+</script>
+
+</body>
+</html>

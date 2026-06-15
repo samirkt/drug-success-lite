@@ -4,11 +4,10 @@ Builds the requested feature groups from whatever the canonical frame carries:
   - molecule / mol : ECFP4(2048)+MACCS(167) from the canonical `smiles` column
                      (rdkit) — identical construction on every dataset, so it
                      matches what HINT's MPNN consumes.
-  - disease        : the rich dsm DiseaseGroup (disease_area + MeSH) when those
-                     columns are present (our data); otherwise multi-hot over the
-                     canonical `icd_codes` (the HINT benchmark) — the same ICD
-                     input HINT's GRAM consumes.
-  - icd            : force the icd_codes multi-hot regardless of source.
+  - disease / icd  : multi-hot over the canonical `icd_codes` — the same ICD
+                     input HINT's GRAM consumes — on every dataset. (disease_area
+                     is uninformative and the MeSH tree is incomplete, so the old
+                     DiseaseGroup is intentionally no longer used.)
   - admet / target / pathway : the rich dsm composite groups (our data only).
 
 Trains on split in {train, valid} (carving its own stratified inner-val for
@@ -26,7 +25,7 @@ import pandas as pd
 
 from ..encoders import MultiHot
 from ..evaluate import metrics
-from ..features import DiseaseGroup, build_group
+from ..features import build_group
 from ..model import build_model
 
 logger = logging.getLogger(__name__)
@@ -75,12 +74,9 @@ def _make_encoders(features: list[str], df: pd.DataFrame) -> list:
         n = name.lower()
         if n in ("molecule", "mol"):
             encs.append(MoleculeFP())
-        elif n == "disease":
-            if "disease_area" in df.columns or "mesh_condition_tree_numbers" in df.columns:
-                encs.append(DiseaseGroup())          # rich (our data)
-            else:
-                encs.append(MultiHot("icd_codes", prefix="icd", top_k=200))  # benchmark
-        elif n == "icd":
+        elif n in ("disease", "icd"):
+            # ICD-code multi-hot everywhere: disease_area is uninformative and the MeSH tree is
+            # incomplete, so the old DiseaseGroup (disease_area + MeSH) is intentionally not used.
             encs.append(MultiHot("icd_codes", prefix="icd", top_k=200))
         elif n in ("admet", "target", "pathway", "target_genes"):
             if not _group_available(n, df):
@@ -107,17 +103,17 @@ def _matrix(encoders: list, df: pd.DataFrame) -> np.ndarray:
     return np.hstack(blocks)
 
 
-def run(*, dataset_path: Path, features: list[str], out_path: Path,
-        model: str = "xgb", seed: int = 0, inner_val_size: float = 0.1,
-        **_ignored) -> Path:
+def fit_encoders_clf(train_df, features, *, model: str = "xgb", seed: int = 0,
+                     inner_val_size: float = 0.1):
+    """Fit feature encoders + classifier on a train frame, returning (encoders, clf).
+
+    Carves a stratified inner-val from `train_df` for early stopping, fits the encoders on the
+    inner-train slice and the clf with early stopping on the inner-val — exactly the procedure
+    `run()` uses, so the returned (encoders, clf) reproduces the experiment. Shared by `run()` and
+    the serving artifact (dsm/serve.py)."""
     from sklearn.model_selection import train_test_split
 
-    df = pd.read_parquet(dataset_path)
-    train_df = df[df["split"].isin(["train", "valid"])].reset_index(drop=True)
-    test_df = df[df["split"] == "test"].reset_index(drop=True)
     y_train = train_df["label"].to_numpy(dtype=int)
-    y_test = test_df["label"].to_numpy(dtype=int)
-
     inner_idx, val_idx = train_test_split(
         np.arange(len(train_df)), test_size=inner_val_size,
         stratify=y_train, random_state=seed,
@@ -126,18 +122,31 @@ def run(*, dataset_path: Path, features: list[str], out_path: Path,
     val_df = train_df.iloc[val_idx].reset_index(drop=True)
     y_inner, y_val = y_train[inner_idx], y_train[val_idx]
 
-    encoders = _make_encoders(features, df)
+    encoders = _make_encoders(features, train_df)
     for e in encoders:
         e.fit(inner_df, y_inner) if _takes_y(e) else e.fit(inner_df)
     X_inner = _matrix(encoders, inner_df)
     X_val = _matrix(encoders, val_df)
-    X_test = _matrix(encoders, test_df)
-    logger.info("features %s -> X_inner=%s X_test=%s", features, X_inner.shape, X_test.shape)
+    logger.info("features %s -> X_inner=%s", features, X_inner.shape)
 
     n_pos = int(y_inner.sum())
     spw = (len(y_inner) - n_pos) / n_pos if n_pos else 1.0
     clf = build_model(model, scale_pos_weight=spw, random_state=seed)
     clf.fit(X_inner, y_inner, X_val=X_val, y_val=y_val)
+    return encoders, clf
+
+
+def run(*, dataset_path: Path, features: list[str], out_path: Path,
+        model: str = "xgb", seed: int = 0, inner_val_size: float = 0.1,
+        **_ignored) -> Path:
+    df = pd.read_parquet(dataset_path)
+    train_df = df[df["split"].isin(["train", "valid"])].reset_index(drop=True)
+    test_df = df[df["split"] == "test"].reset_index(drop=True)
+    y_test = test_df["label"].to_numpy(dtype=int)
+
+    encoders, clf = fit_encoders_clf(train_df, features, model=model, seed=seed,
+                                     inner_val_size=inner_val_size)
+    X_test = _matrix(encoders, test_df)
     y_proba = clf.predict_proba(X_test)[:, 1]
 
     preds = pd.DataFrame({

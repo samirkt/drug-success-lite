@@ -5,8 +5,8 @@ an entry here — no new code. Run with `python -m dsm run <name>`.
 
 Feature vocabulary:
   - sklearn (xgb/logreg): molecule, disease, admet, target, pathway
-    (molecule = ECFP4+MACCS from SMILES; disease = MeSH groups on our data /
-     ICD multi-hot on the benchmark; admet/target/pathway = our data only).
+    (molecule = ECFP4+MACCS from SMILES; disease = ICD-code multi-hot on every
+     dataset; admet/target/pathway = our data only).
   - hint: mol, disease[, criteria]  (mol = MPNN, disease = GRAM, criteria = BioBERT
     protocol encoder; without `criteria` it loads the empty stub embedding).
 """

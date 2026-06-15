@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Approval probability — molecule + disease</title>
+<style>
+  :root { color-scheme: light dark; --fg:#1a1a1a; --muted:#666; --bg:#fafafa;
+          --card:#fff; --border:#e2e2e2; --accent:#2f6fed; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg:#e8e8e8; --muted:#9aa; --bg:#15171a; --card:#1e2127; --border:#2c3038; }
+  }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.5 system-ui, -apple-system, sans-serif; color: var(--fg);
+         background: var(--bg); margin: 0; padding: 2rem 1rem; }
+  main { max-width: 560px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+  p.sub { color: var(--muted); margin: 0 0 1.5rem; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+          padding: 1.25rem; margin-bottom: 1rem; }
+  label { display: block; font-weight: 600; margin-bottom: .35rem; }
+  .hint { font-weight: 400; color: var(--muted); font-size: .85em; }
+  input { width: 100%; padding: .6rem .7rem; font-size: 1rem; border: 1px solid var(--border);
+          border-radius: 8px; background: var(--bg); color: var(--fg); margin-bottom: 1rem; }
+  button { width: 100%; padding: .7rem; font-size: 1rem; font-weight: 600; color: #fff;
+           background: var(--accent); border: 0; border-radius: 8px; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: default; }
+  #result { display: none; }
+  .prob { font-size: 3rem; font-weight: 700; line-height: 1; }
+  .bar { height: 10px; border-radius: 6px; background: var(--border); overflow: hidden;
+         margin: .75rem 0; }
+  .bar > div { height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+  .ctx { color: var(--muted); font-size: .9rem; }
+  .diag { font-size: .85rem; color: var(--muted); margin-top: .75rem; }
+  .diag .warn { color: #c2410c; }
+  .err { color: #c2410c; }
+  .row { display: flex; gap: .5rem; margin-bottom: .5rem; }
+  .row input { margin-bottom: 0; }
+  button.lookup { width: auto; flex: 0 0 auto; padding: .6rem 1rem; background: transparent;
+                  color: var(--accent); border: 1px solid var(--accent); font-weight: 600; }
+  .lookmsg { font-size: .85rem; color: var(--muted); margin-bottom: 1rem; min-height: 1.1em; }
+  .lookmsg .warn { color: #c2410c; }
+  #icdcands { margin: -.5rem 0 1rem; }
+  #icdcands label { font-weight: 400; display: flex; gap: .5rem; align-items: baseline;
+                    padding: .25rem 0; cursor: pointer; }
+  #icdcands input { width: auto; margin: 0; }
+  #icdcands code { color: var(--accent); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Drug approval probability</h1>
+  <p class="sub">Molecule + disease model — enter a structure and indication.</p>
+
+  <div class="card">
+    <label for="drugname">Drug name <span class="hint">look up structure via ChEMBL</span></label>
+    <div class="row">
+      <input id="drugname" placeholder="aspirin" autocomplete="off" />
+      <button class="lookup" id="lookdrug">Look up</button>
+    </div>
+    <div class="lookmsg" id="drugmsg"></div>
+
+    <label for="diseasename">Disease name <span class="hint">find ICD-10 codes via NLM</span></label>
+    <div class="row">
+      <input id="diseasename" placeholder="alzheimer" autocomplete="off" />
+      <button class="lookup" id="lookdisease">Look up</button>
+    </div>
+    <div class="lookmsg" id="diseasemsg"></div>
+    <div id="icdcands"></div>
+  </div>
+
+  <div class="card">
+    <label for="smiles">SMILES</label>
+    <input id="smiles" placeholder="CC(=O)Oc1ccccc1C(=O)O" autocomplete="off" />
+
+    <label for="icd">ICD-10 code(s) <span class="hint">comma-separated, e.g. C50.9, F32.A</span></label>
+    <input id="icd" placeholder="C50.9" autocomplete="off" />
+
+    <button id="go">Predict</button>
+  </div>
+
+  <div class="card" id="result">
+    <div class="prob"><span id="prob">–</span></div>
+    <div class="bar"><div id="probbar"></div></div>
+    <div class="ctx" id="ctx"></div>
+    <div class="diag" id="diag"></div>
+  </div>
+
+  <p class="err" id="err"></p>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+async function predict() {
+  const smiles = $("smiles").value.trim();
+  const icd_codes = $("icd").value.split(",").map(s => s.trim()).filter(Boolean);
+  $("err").textContent = "";
+  $("go").disabled = true; $("go").textContent = "Scoring…";
+  try {
+    const resp = await fetch("/predict", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ smiles, icd_codes }),
+    });
+    if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
+    render(await resp.json());
+  } catch (e) {
+    $("err").textContent = "Error: " + e.message;
+  } finally {
+    $("go").disabled = false; $("go").textContent = "Predict";
+  }
+}
+
+function render(d) {
+  const pct = (d.approval_probability * 100).toFixed(1);
+  $("prob").textContent = pct + "%";
+  $("probbar").style.width = pct + "%";
+
+  let ctx = "predicted probability of eventual approval";
+  if (d.base_rate != null) {
+    const base = (d.base_rate * 100).toFixed(0);
+    const rel = d.approval_probability >= d.base_rate ? "above" : "below";
+    ctx += ` — ${rel} the ~${base}% base rate`;
+  }
+  $("ctx").textContent = ctx;
+
+  const diag = [];
+  if (!d.smiles_valid) diag.push('<span class="warn">⚠ SMILES did not parse — molecule features are blank</span>');
+  if (d.n_icd_total === 0) diag.push('<span class="warn">⚠ no ICD codes entered</span>');
+  else diag.push(`${d.n_icd_in_vocab}/${d.n_icd_total} ICD code(s) recognized by the model`);
+  if (d.model && d.model.roc_auc != null) diag.push(`model test ROC-AUC ${d.model.roc_auc.toFixed(3)}`);
+  $("diag").innerHTML = diag.join(" · ");
+
+  $("result").style.display = "block";
+}
+
+async function lookupDrug() {
+  const name = $("drugname").value.trim();
+  if (!name) return;
+  $("drugmsg").textContent = "Looking up…";
+  $("lookdrug").disabled = true;
+  try {
+    const r = await fetch("/resolve/drug?name=" + encodeURIComponent(name));
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const d = await r.json();
+    if (d.smiles) {
+      $("smiles").value = d.smiles;
+      $("drugmsg").innerHTML = `matched <b>${d.pref_name || d.chembl_id}</b> → SMILES filled`;
+    } else {
+      $("drugmsg").innerHTML = '<span class="warn">no small-molecule structure found (biologic?)</span>';
+    }
+  } catch (e) {
+    $("drugmsg").innerHTML = '<span class="warn">Error: ' + e.message + '</span>';
+  } finally {
+    $("lookdrug").disabled = false;
+  }
+}
+
+function syncIcdField() {
+  const codes = [...document.querySelectorAll("#icdcands input:checked")].map(c => c.value);
+  $("icd").value = codes.join(", ");
+}
+
+async function lookupDisease() {
+  const name = $("diseasename").value.trim();
+  if (!name) return;
+  $("diseasemsg").textContent = "Looking up…";
+  $("icdcands").innerHTML = "";
+  $("lookdisease").disabled = true;
+  try {
+    const r = await fetch("/resolve/disease?name=" + encodeURIComponent(name));
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const d = await r.json();
+    if (!d.candidates.length) {
+      $("diseasemsg").innerHTML = '<span class="warn">no ICD matches — try different wording or enter codes below</span>';
+      return;
+    }
+    $("diseasemsg").textContent = "select the code(s) to include:";
+    $("icdcands").innerHTML = d.candidates.map(c =>
+      `<label><input type="checkbox" value="${c.code}"><code>${c.code}</code> ${c.name}</label>`
+    ).join("");
+    document.querySelectorAll("#icdcands input").forEach(c => c.addEventListener("change", syncIcdField));
+  } catch (e) {
+    $("diseasemsg").innerHTML = '<span class="warn">Error: ' + e.message + '</span>';
+  } finally {
+    $("lookdisease").disabled = false;
+  }
+}
+
+$("go").addEventListener("click", predict);
+$("lookdrug").addEventListener("click", lookupDrug);
+$("lookdisease").addEventListener("click", lookupDisease);
+$("drugname").addEventListener("keydown", (e) => { if (e.key === "Enter") lookupDrug(); });
+$("diseasename").addEventListener("keydown", (e) => { if (e.key === "Enter") lookupDisease(); });
+for (const id of ["smiles", "icd"]) {
+  $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") predict(); });
+}
+</script>
+</body>
+</html>
