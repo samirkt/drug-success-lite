@@ -54,6 +54,7 @@ def run_experiment(
         epochs=epochs or spec.epochs,
         class_weight=spec.class_weight,
         pca=spec.pca,
+        calibration_folds=spec.calibration_folds,
     )
 
     payload = {

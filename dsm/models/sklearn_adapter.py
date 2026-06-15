@@ -178,9 +178,52 @@ def fit_encoders_clf(train_df, features, *, model: str = "xgb", seed: int = 0,
     return pipeline, clf, val_scores, y_val
 
 
+class PlattCalibrator:
+    """Platt (logistic) calibration: maps a raw model score to a probability via a fitted sigmoid.
+    Smooth and monotone — unlike isotonic it neither collapses score ranges into flat steps nor
+    overfits a sparse high tail to certainty. Picklable; exposes `.predict()` like IsotonicRegression."""
+
+    def __init__(self, lr):
+        self._lr = lr
+
+    def predict(self, x):
+        x = np.asarray(x, dtype=float).reshape(-1, 1)
+        return self._lr.predict_proba(x)[:, 1]
+
+    @classmethod
+    def fit(cls, scores, labels):
+        from sklearn.linear_model import LogisticRegression
+        lr = LogisticRegression(C=1e6, solver="lbfgs")
+        lr.fit(np.asarray(scores, dtype=float).reshape(-1, 1), np.asarray(labels, dtype=int))
+        return cls(lr)
+
+
+def _fit_calibrator(train_df, features, val_scores, y_val, *, model, seed, inner_val_size, pca,
+                    cv_folds):
+    """Fit a Platt calibrator. With `cv_folds` > 1, fit it on cross-validated out-of-fold
+    predictions over the FULL train split (each fold scored by a model trained on the others) — far
+    more, cleaner calibration data than the single inner-val slice. Otherwise fall back to the
+    inner-val scores (no extra training)."""
+    if cv_folds and cv_folds > 1:
+        from sklearn.model_selection import StratifiedKFold
+
+        y = train_df["label"].to_numpy(dtype=int)
+        oof = np.zeros(len(train_df), dtype=float)
+        skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=seed)
+        for k, (tr_idx, oof_idx) in enumerate(skf.split(np.arange(len(train_df)), y), 1):
+            logger.info("calibration fold %d/%d", k, cv_folds)
+            pipe_f, clf_f, _, _ = fit_encoders_clf(
+                train_df.iloc[tr_idx].reset_index(drop=True), features,
+                model=model, seed=seed, inner_val_size=inner_val_size, pca=pca)
+            oof[oof_idx] = clf_f.predict_proba(
+                pipe_f.transform(train_df.iloc[oof_idx].reset_index(drop=True)))[:, 1]
+        return PlattCalibrator.fit(oof, y), f"platt-cv{cv_folds}"
+    return PlattCalibrator.fit(val_scores, y_val), "platt-innerval"
+
+
 def run(*, dataset_path: Path, features: list[str], out_path: Path,
         model: str = "xgb", seed: int = 0, inner_val_size: float = 0.1,
-        pca: int | None = None, **_ignored) -> Path:
+        pca: int | None = None, calibration_folds: int = 0, **_ignored) -> Path:
     df = pd.read_parquet(dataset_path)
     train_df = df[df["split"].isin(["train", "valid"])].reset_index(drop=True)
     test_df = df[df["split"] == "test"].reset_index(drop=True)
@@ -203,25 +246,26 @@ def run(*, dataset_path: Path, features: list[str], out_path: Path,
     logger.info("%s on %s: ROC-AUC=%.4f PR-AUC=%.4f F1=%.4f -> %s",
                 model, dataset_path.stem, m["roc_auc"], m["pr_auc"], m["f1"], out_path)
 
-    _save_model(out_path.parent / "model.joblib", pipeline, clf, features, train_df,
-                val_scores, y_val, y_test, y_proba, m["roc_auc"])
+    calibrator, calib_kind = _fit_calibrator(
+        train_df, features, val_scores, y_val, model=model, seed=seed,
+        inner_val_size=inner_val_size, pca=pca, cv_folds=calibration_folds)
+    _save_model(out_path.parent / "model.joblib", pipeline, clf, calibrator, calib_kind,
+                features, train_df, y_test, y_proba, m["roc_auc"])
     return out_path
 
 
-def _save_model(path, pipeline, clf, features, train_df, val_scores, y_val, y_test, y_proba,
+def _save_model(path, pipeline, clf, calibrator, calib_kind, features, train_df, y_test, y_proba,
                 roc_auc) -> None:
-    """Persist the fitted model for reloading (serving, re-scoring). Bundles an isotonic
-    calibrator fit on the held-out inner-val predictions — no extra training — and reports its
-    effect via the raw vs calibrated Brier on the test split."""
+    """Persist the fitted model + calibrator for reloading (serving, re-scoring), reporting the
+    calibrator's effect via the raw vs calibrated Brier on the test split."""
     import joblib
-    from sklearn.isotonic import IsotonicRegression
     from sklearn.metrics import brier_score_loss
 
-    calibrator = IsotonicRegression(out_of_bounds="clip").fit(val_scores, y_val)
     payload = {
         "pipeline": pipeline,
         "clf": clf,
         "calibrator": calibrator,
+        "calibration": calib_kind,
         "features": list(features),
         "base_rate": float(train_df["label"].mean()),
         "metrics": {
@@ -232,8 +276,8 @@ def _save_model(path, pipeline, clf, features, train_df, val_scores, y_val, y_te
         },
     }
     joblib.dump(payload, path)
-    logger.info("saved model -> %s (Brier %.4f -> %.4f after calibration)",
-                path, payload["metrics"]["brier_raw"], payload["metrics"]["brier"])
+    logger.info("saved model -> %s (%s; Brier %.4f -> %.4f after calibration)",
+                path, calib_kind, payload["metrics"]["brier_raw"], payload["metrics"]["brier"])
 
 
 def _takes_y(encoder) -> bool:

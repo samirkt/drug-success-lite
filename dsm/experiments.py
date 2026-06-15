@@ -47,6 +47,7 @@ class ExperimentSpec:
     epochs: int = 5                              # hint only
     class_weight: bool = False                   # hint only: pos_weight=n_neg/n_pos in the BCE loss
     pca: Optional[int] = None                    # sklearn only: PCA-<n> per feature group (bottleneck)
+    calibration_folds: int = 0                   # sklearn only: >1 = Platt on K-fold OOF of full train
 
     def __post_init__(self):
         if not (self.dataset or self.native_benchmark):
@@ -88,7 +89,8 @@ EXPERIMENTS: dict[str, ExperimentSpec] = {s.name: s for s in [
     # alternate target representation: raw drug->target UniProt multi-hot vs the engineered `target`.
     _e("abl_target_genes", "xgb", ("target_genes",), dataset="ours_di", pca=50),
     # cumulative (build up from md):
-    _e("abl_md", "xgb", ("molecule", "disease"), dataset="ours_di", pca=50),
+    # abl_md is the web-served model: calibrate with Platt on 5-fold out-of-fold train predictions.
+    _e("abl_md", "xgb", ("molecule", "disease"), dataset="ours_di", pca=50, calibration_folds=5),
     _e("abl_mdt", "xgb", ("molecule", "disease", "target"), dataset="ours_di", pca=50),
     _e("abl_mdp", "xgb", ("molecule", "disease", "pathway"), dataset="ours_di", pca=50),
     _e("abl_mda", "xgb", ("molecule", "disease", "admet"), dataset="ours_di", pca=50),
