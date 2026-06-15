@@ -1,16 +1,17 @@
 """Serving layer for the molecule+disease model: build a persistent artifact and score one
 (SMILES, ICD-10) pair.
 
-The artifact reproduces the `xgb_di_md` experiment exactly — same train split, encoders, and
-classifier (via `fit_encoders_clf`) — so a served prediction matches that experiment's saved
-`predictions.parquet`. Pure-python (no web deps); the FastAPI layer lives in `app.py`.
+The base model reproduces the `xgb_di_md` experiment exactly — same full train split, encoders, and
+classifier (via `fit_encoders_clf`) — so the raw score matches that experiment's saved
+`predictions.parquet`. An isotonic calibrator, fit on cross-validated out-of-fold train predictions
+(no data withheld from the final model, no leakage), is applied on top to produce a calibrated
+probability. Pure-python (no web deps); the FastAPI layer lives in `app.py`.
 
     python -m dsm.serve        # (re)build runs/xgb_di_md/serve_artifact.joblib
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 
@@ -33,34 +34,63 @@ ARTIFACT_PATH = RUNS_DIR / "xgb_di_md" / "serve_artifact.joblib"
 _PREDICTOR: dict | None = None
 
 
-def _load_metrics() -> dict:
-    """Overall ROC-AUC + test size from the xgb_di_md run, if it exists (for UI context)."""
-    mj = RUNS_DIR / "xgb_di_md" / "metrics.json"
-    if not mj.exists():
-        return {}
-    try:
-        d = json.loads(mj.read_text())
-        return {"roc_auc": d.get("overall", {}).get("roc_auc"), "n_test": d.get("n")}
-    except (json.JSONDecodeError, OSError):
-        return {}
+N_CALIB_FOLDS = 5   # CV folds for the out-of-fold predictions the calibrator is fit on
 
 
 def build_artifact(path: Path = ARTIFACT_PATH) -> Path:
-    """Fit (encoders, clf) on the ours_di train split and dump a servable artifact."""
+    """Dump a servable artifact: the full-train xgb_di_md model + an isotonic calibrator on top.
+
+    The final (encoders, clf) are fit on the FULL train split — identical to the experiment, so the
+    raw score matches its predictions.parquet. The calibrator is fit on cross-validated out-of-fold
+    predictions of train (each fold scored by a model trained on the other folds), which gives an
+    unbiased calibration map without withholding any data from the final model. Brier/ROC are
+    reported on the untouched test split."""
+    from sklearn.isotonic import IsotonicRegression
+    from sklearn.metrics import brier_score_loss, roc_auc_score
+    from sklearn.model_selection import StratifiedKFold
+
     ds_path = materialize(DATASETS[DATASET])
     df = pd.read_parquet(ds_path)
     train_df = df[df["split"].isin(["train", "valid"])].reset_index(drop=True)
+    y_train = train_df["label"].to_numpy(dtype=int)
+
+    # Out-of-fold train predictions -> isotonic calibrator (no leakage into the final model).
+    oof = np.zeros(len(train_df), dtype=float)
+    skf = StratifiedKFold(n_splits=N_CALIB_FOLDS, shuffle=True, random_state=0)
+    for tr_idx, oof_idx in skf.split(np.arange(len(train_df)), y_train):
+        enc_f, clf_f = fit_encoders_clf(train_df.iloc[tr_idx].reset_index(drop=True), FEATURES)
+        oof_df = train_df.iloc[oof_idx].reset_index(drop=True)
+        oof[oof_idx] = clf_f.predict_proba(_matrix(enc_f, oof_df))[:, 1]
+    calibrator = IsotonicRegression(out_of_bounds="clip")
+    calibrator.fit(oof, y_train)
+
+    # Final model: the original xgb_di_md, fit on the full train split (untouched).
     encoders, clf = fit_encoders_clf(train_df, FEATURES)
+
+    # Honest evaluation on the untouched test split: raw vs calibrated.
+    test_df = df[df["split"] == "test"].reset_index(drop=True)
+    y_test = test_df["label"].to_numpy(dtype=int)
+    raw_test = clf.predict_proba(_matrix(encoders, test_df))[:, 1]
+    cal_test = calibrator.predict(raw_test)
+    metrics = {
+        "roc_auc": float(roc_auc_score(y_test, raw_test)),  # unchanged by monotonic calibration
+        "brier_raw": float(brier_score_loss(y_test, raw_test)),
+        "brier": float(brier_score_loss(y_test, cal_test)),
+        "n_test": int(len(y_test)),
+    }
+
     artifact = {
         "encoders": encoders,
         "clf": clf,
+        "calibrator": calibrator,
         "features": list(FEATURES),
         "base_rate": float(train_df["label"].mean()),
-        "metrics": _load_metrics(),
+        "metrics": metrics,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(artifact, path)
-    logger.info("wrote serving artifact -> %s (base_rate=%.4f)", path, artifact["base_rate"])
+    logger.info("wrote serving artifact -> %s (base_rate=%.4f, Brier %.4f -> %.4f after calibration)",
+                path, artifact["base_rate"], metrics["brier_raw"], metrics["brier"])
     return path
 
 
@@ -97,7 +127,9 @@ def predict_one(smiles: str, icd_codes: list[str]) -> dict:
         "icd_codes": [codes],
     })
     X = np.hstack([e.transform(row) for e in encoders])
-    proba = float(art["clf"].predict_proba(X)[0, 1])
+    raw = float(art["clf"].predict_proba(X)[0, 1])
+    calibrator = art.get("calibrator")
+    proba = float(calibrator.predict([raw])[0]) if calibrator is not None else raw
 
     from rdkit import Chem, RDLogger
     RDLogger.DisableLog("rdApp.*")
@@ -106,6 +138,7 @@ def predict_one(smiles: str, icd_codes: list[str]) -> dict:
 
     return {
         "approval_probability": proba,
+        "raw_score": raw,
         "base_rate": art.get("base_rate"),
         "smiles_valid": smiles_valid,
         "n_icd_total": len(codes),

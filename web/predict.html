@@ -129,7 +129,12 @@ function render(d) {
   if (!d.smiles_valid) diag.push('<span class="warn">⚠ SMILES did not parse — molecule features are blank</span>');
   if (d.n_icd_total === 0) diag.push('<span class="warn">⚠ no ICD codes entered</span>');
   else diag.push(`${d.n_icd_in_vocab}/${d.n_icd_total} ICD code(s) recognized by the model`);
-  if (d.model && d.model.roc_auc != null) diag.push(`model test ROC-AUC ${d.model.roc_auc.toFixed(3)}`);
+  if (d.raw_score != null) diag.push(`isotonic-calibrated (raw score ${(d.raw_score * 100).toFixed(0)}%)`);
+  if (d.model && d.model.roc_auc != null) {
+    let m = `model test ROC-AUC ${d.model.roc_auc.toFixed(3)}`;
+    if (d.model.brier != null) m += `, Brier ${d.model.brier.toFixed(3)}`;
+    diag.push(m);
+  }
   $("diag").innerHTML = diag.join(" · ");
 
   $("result").style.display = "block";
