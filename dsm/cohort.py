@@ -60,10 +60,14 @@ def load_cohort(force: bool = False) -> dict:
     fp_matrix = np.stack(df["ecfp4"].values).astype(np.uint8)   # (N, 2048)
     canon_smiles = [(s[0] if isinstance(s, (list, np.ndarray)) and len(s) else "") for s in df["smiles"]]
 
+    # Distinct-drug key: the minimized serving dataset ships an opaque `drug_uid` (no DrugBank
+    # references); the full local dataset still has `drugbank_id`. Either works as a grouping key.
+    key_col = "drug_uid" if "drug_uid" in df.columns else "drugbank_id"
+
     _COHORT = {
         "fp_matrix": fp_matrix,
         "fp_popcount": fp_matrix.sum(1).astype(np.int32),
-        "drugbank_id": df["drugbank_id"].astype(str).to_numpy(),
+        "drug_uid": df[key_col].astype(str).to_numpy(),
         "drug_name": df["drug_name"].astype(str).to_numpy(),
         "indication": df["indication"].astype(str).to_numpy(),
         "label": df["label"].astype(np.int8).to_numpy(),
@@ -100,16 +104,16 @@ def _tanimoto(matrix: np.ndarray, popcount: np.ndarray, q: np.ndarray) -> np.nda
 
 
 def _dedupe_by_drug(idx: np.ndarray, sim: np.ndarray, c: dict) -> list[dict]:
-    """Collapse program rows to distinct drugs (by drugbank_id), keeping each drug's max
+    """Collapse program rows to distinct drugs (by drug_uid), keeping each drug's max
     similarity and drug-level approval (approved if ANY of its programs was approved)."""
     by_drug: dict[str, dict] = {}
     for i in idx:
-        dbid = c["drugbank_id"][i]
+        dbid = c["drug_uid"][i]
         cur = by_drug.get(dbid)
         approved = bool(c["label"][i] == 1)
         if cur is None:
             by_drug[dbid] = {
-                "drugbank_id": dbid,
+                "drug_uid": dbid,
                 "drug_name": c["drug_name"][i],
                 "similarity": float(sim[i]),
                 "approved": approved,

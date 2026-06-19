@@ -98,7 +98,7 @@
     <label for="smiles">SMILES</label>
     <input id="smiles" placeholder="CC(=O)Oc1ccccc1C(=O)O" autocomplete="off" />
 
-    <label for="icd">ICD-10 code(s) <span class="hint">comma-separated, e.g. C50.9, F32.A</span></label>
+    <label for="icd">ICD-10 code <span class="hint">e.g. C50.9</span></label>
     <input id="icd" placeholder="C50.9" autocomplete="off" />
 
     <button id="go">Predict</button>
@@ -156,7 +156,8 @@ function postJSON(url, body) {
 
 async function predict() {
   const smiles = $("smiles").value.trim();
-  const icd_codes = $("icd").value.split(",").map(s => s.trim()).filter(Boolean);
+  // one ICD code at a time — take the first if anything extra was typed
+  const icd_codes = $("icd").value.split(",").map(s => s.trim()).filter(Boolean).slice(0, 1);
   $("err").textContent = "";
   $("go").disabled = true; $("go").textContent = "Scoring…";
   // Score and pull the dataset cohort concurrently — independent calls.
@@ -292,8 +293,12 @@ async function lookupDrug() {
     if (d.smiles) {
       $("smiles").value = d.smiles;
       $("drugmsg").innerHTML = `matched <b>${d.pref_name || d.chembl_id}</b> → SMILES filled`;
+    } else if (!d.candidates || !d.candidates.length) {
+      $("drugmsg").innerHTML = '<span class="warn">no ChEMBL match — check the spelling, or paste a SMILES string into the field below.</span>';
     } else {
-      $("drugmsg").innerHTML = '<span class="warn">no small-molecule structure found (biologic?)</span>';
+      const top = d.candidates[0];
+      const label = top.pref_name || top.chembl_id || "this entry";
+      $("drugmsg").innerHTML = `<span class="warn">matched <b>${label}</b>, but it has no small-molecule structure (likely a biologic, e.g. an antibody or protein). Paste a SMILES string into the field below if you have one.</span>`;
     }
   } catch (e) {
     $("drugmsg").innerHTML = '<span class="warn">Error: ' + e.message + '</span>';
@@ -303,8 +308,8 @@ async function lookupDrug() {
 }
 
 function syncIcdField() {
-  const codes = [...document.querySelectorAll("#icdcands input:checked")].map(c => c.value);
-  $("icd").value = codes.join(", ");
+  const picked = document.querySelector("#icdcands input:checked");
+  $("icd").value = picked ? picked.value : "";
 }
 
 async function lookupDisease() {
@@ -321,9 +326,9 @@ async function lookupDisease() {
       $("diseasemsg").innerHTML = '<span class="warn">no ICD matches — try different wording or enter codes below</span>';
       return;
     }
-    $("diseasemsg").textContent = "select the code(s) to include:";
+    $("diseasemsg").textContent = "select one code:";
     $("icdcands").innerHTML = d.candidates.map(c =>
-      `<label><input type="checkbox" value="${c.code}"><code>${c.code}</code> ${c.name}</label>`
+      `<label><input type="radio" name="icdcand" value="${c.code}"><code>${c.code}</code> ${c.name}</label>`
     ).join("");
     document.querySelectorAll("#icdcands input").forEach(c => c.addEventListener("change", syncIcdField));
   } catch (e) {

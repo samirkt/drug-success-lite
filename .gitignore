@@ -21,6 +21,9 @@ runs/
 runs_old/
 runs_final/
 
+# Generated Hugging Face Space (built by deploy/build_space.sh; bundles model + data artifacts).
+deploy/space/
+
 # Python / uv.
 .venv/
 __pycache__/
