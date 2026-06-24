@@ -1,0 +1,144 @@
+
+CHALLENGE
+---------
+The web tool (app.py -> dsm/serve.py) scores a (SMILES, ICD-10) pair with a
+trained ML model and returns a predicted probability of eventual approval.
+That's appropriate for a NEW, unseen drug+disease combination. But if the
+exact same molecule has already reached approval for the exact same disease
+area in our own training data, showing a probabilistic estimate (e.g. "72%
+likely to be approved") is misleading -- we already know the outcome
+happened. "Already done" should mean "already passed," i.e. 100% confidence,
+not a model guess.
+
+A secondary concern raised during planning: disease names are entered as
+free text in the UI, which isn't deterministic on its own (the same disease
+can be typed many ways). We needed to confirm the matching wouldn't be built
+on unreliable free-text comparison.
+
+GOAL
+----
+When a user queries a (drug, disease) pair that exactly matches a program in
+our dataset that was already approved, override the model's probability
+output to 100% and clearly flag in the UI that this is a known historical
+match, not a model prediction -- while still showing the model's own raw
+score for transparency.
+
+HOW WE SOLVED IT
+-----------------
+We did not need a new free-text/NLP matching system. By the time a query
+reaches the prediction or cohort-comparison code, the disease has already
+been converted from free text into a standardized ICD-10 code by the
+existing /resolve/disease endpoint (dsm/resolve.py:resolve_disease, backed
+by the NLM ICD-10-CM API), and the drug name has already been converted into
+a SMILES string by /resolve/drug (ChEMBL). So the "already approved" check
+only ever operates on canonical SMILES + ICD-10 codes, never on raw text --
+this removes the determinism concern entirely.
+
+The repo already had a cohort-comparison feature (dsm/cohort.py) that, given
+a SMILES + ICD-10 query, finds "comparable" historical programs using two
+existing techniques:
+  - Molecule similarity: ECFP4 (Morgan) fingerprints + vectorized Tanimoto
+    similarity against every program in the dataset.
+  - Disease similarity: ICD-10 codes truncated to their 3-character category
+    (e.g. C50.1 and C50.9 both fall under C50), so near-identical diagnoses
+    count as the same disease area.
+  - A constant, _SELF_MATCH = 0.999 Tanimoto, already existed in the code to
+    detect "this is essentially the same molecule" (used to exclude a query
+    from its own neighbor list).
+
+We reused all of this exactly as-is, and added one new, stricter query on
+top of it: instead of "top-10 similar molecules" or "any disease overlap,"
+we look for a program that is BOTH near-identical in molecule (Tanimoto >=
+0.999) AND in the same disease category AND was labeled approved
+(label == 1). If such a program exists, we treat the query as "already
+approved" and override the prediction to 100%.
+
+WHAT WE DID, FILE BY FILE
+--------------------------
+
+1. dsm/cohort.py
+   Added a new function, lookup_exact_match(smiles, icd_codes), placed next
+   to the existing cohort_stats() function. It reuses the existing
+   load_cohort() cache, _query_fp() (fingerprint a SMILES), _tanimoto()
+   (vectorized similarity), and _icd_category() (ICD -> 3-char category)
+   helpers -- no new data-access code was written. It returns either:
+     - a dict with the matched program's drug_name and indication, or
+     - None, if no exact approved match exists.
+
+2. dsm/serve.py
+   In predict_one(), after the model computes its normal calibrated
+   probability, we call lookup_exact_match(smiles, codes). If it returns a
+   match:
+     - approval_probability is overridden to 1.0
+     - the response gains three new fields: already_approved (bool),
+       matched_drug_name, matched_indication
+   The model's own raw_score and all other diagnostics (smiles_valid,
+   n_icd_in_vocab, etc.) are left untouched, so the underlying model opinion
+   is still visible -- only the headline probability is overridden.
+
+3. web/predict.html
+   - Added a new CSS class (.diag .match, green) next to the existing
+     warning-style diagnostic class.
+   - In the render(d) function, if d.already_approved is true, a green line
+     is shown above the other diagnostics: "exact match -- <drug name>
+     already approved for this disease area in our dataset."
+
+No changes were needed in app.py (it already forwards requests unchanged to
+predict_one) or dsm/resolve.py (the name -> ICD/SMILES resolution was
+already deterministic and is unaffected by this change).
+
+METHOD / PROCESS
+-----------------
+- Used the existing plan-mode workflow: explored the prediction pipeline
+  (app.py, dsm/serve.py, dsm/resolve.py, dsm/cohort.py, dsm/datasets.py)
+  before writing any code, to find and reuse existing patterns rather than
+  invent new ones.
+- Asked clarifying questions on two open design points before implementing:
+  (1) how strict the disease match should be (3-char ICD category vs. exact
+  code -- went with category, matching existing cohort-comparison behavior),
+  and (2) whether the model should still run when a match is found (yes --
+  override the displayed number, keep the raw score for transparency).
+  A third question came up organically about disease-name determinism,
+  resolved by tracing the existing /resolve/disease flow rather than adding
+  new logic.
+- Wrote a plan file documenting the design before touching any code, then
+  implemented exactly that plan.
+
+LIMITATIONS
+-----------
+We did NOT actually run this code against real data. The environment used
+to implement this change has no `uv` runtime installed initially, and even
+after installing it, the `data/` directory (containing candidate_detail.
+parquet, trial_detail.parquet, and the materialized data/datasets/
+ours_di.parquet the cohort/model depend on) does not exist on this machine.
+Attempting to train the model (`uv run python -m dsm run abl_md`) failed
+with FileNotFoundError for data/candidate_detail.parquet, confirming the
+data is genuinely absent here, not just unbuilt.
+
+As a result:
+- The code was verified only for syntax correctness (it parses, and it only
+  calls functions/fields that pre-existing, working code in this repo
+  already calls the same way).
+- It has NOT been verified to produce correct results on real rows: we do
+  not know whether the matching logic (Tanimoto >= 0.999 + 3-char ICD
+  category + label == 1) actually returns sensible matches, whether the
+  schema assumptions inherited from load_cohort() still hold, or whether
+  edge cases (e.g. multiple ICD codes, missing SMILES, duplicate drug
+  entries) behave as intended.
+- Before trusting this in production, run the verification steps below
+  against the real dataset.
+
+VERIFICATION STEPS (NOT YET RUN)
+---------------------------------
+1. uv run python -m dsm.cohort
+   -- confirms the cohort still loads with no behavior change.
+2. Pick a known-approved row from data/datasets/ours_di.parquet (label==1),
+   call dsm.serve.predict_one(smiles, icd_codes) directly, and confirm
+   approval_probability == 1.0 and already_approved == True with the
+   correct matched_drug_name.
+3. Call predict_one() with a clearly novel (smiles, icd) pair and confirm
+   already_approved == False and the probability is the normal model score.
+4. uv run pytest tests/ -q
+5. uv run uvicorn app:app --port 8080, open the page, and manually confirm
+   the green "exact match" line appears for a known-approved pair and not
+   for a novel one.

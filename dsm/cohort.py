@@ -124,6 +124,27 @@ def _dedupe_by_drug(idx: np.ndarray, sim: np.ndarray, c: dict) -> list[dict]:
     return sorted(by_drug.values(), key=lambda d: d["similarity"], reverse=True)
 
 
+def lookup_exact_match(smiles: str, icd_codes: list[str]) -> dict | None:
+    """If this exact molecule has already been approved for this disease area in our
+    dataset, return the matching program's identity. Otherwise None."""
+    c = load_cohort()
+    codes = [s.strip() for s in (icd_codes or []) if s and s.strip()]
+    query_cats = set(_icd_category(codes))
+    q = _query_fp(smiles) if smiles else None
+    if q is None or not query_cats:
+        return None
+
+    sim = _tanimoto(c["fp_matrix"], c["fp_popcount"], q)
+    same_molecule = sim >= _SELF_MATCH
+    same_disease = np.array([bool(cats & query_cats) for cats in c["icd_cats"]])
+    approved = c["label"] == 1
+    idx = np.where(same_molecule & same_disease & approved)[0]
+    if len(idx) == 0:
+        return None
+    i = idx[0]
+    return {"drug_name": c["drug_name"][i], "indication": c["indication"][i]}
+
+
 def cohort_stats(smiles: str, icd_codes: list[str]) -> dict:
     """Summarize comparable programs for one (SMILES, ICD-10 list) query."""
     c = load_cohort()

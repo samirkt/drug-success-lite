@@ -19,6 +19,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from .cohort import lookup_exact_match
 from .config import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,10 @@ def predict_one(smiles: str, icd_codes: list[str]) -> dict:
     calibrator = art.get("calibrator")
     proba = float(calibrator.predict([raw])[0]) if calibrator is not None else raw
 
+    match = lookup_exact_match(smiles, codes)
+    if match is not None:
+        proba = 1.0
+
     from rdkit import Chem, RDLogger
     RDLogger.DisableLog("rdApp.*")
     smiles_valid = bool(smiles) and Chem.MolFromSmiles(smiles) is not None
@@ -86,6 +91,9 @@ def predict_one(smiles: str, icd_codes: list[str]) -> dict:
     return {
         "approval_probability": proba,
         "raw_score": raw,
+        "already_approved": match is not None,
+        "matched_drug_name": match["drug_name"] if match else None,
+        "matched_indication": match["indication"] if match else None,
         "base_rate": art.get("base_rate"),
         "smiles_valid": smiles_valid,
         "n_icd_total": len(codes),

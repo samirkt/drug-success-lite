@@ -33,6 +33,7 @@
   .ctx { color: var(--muted); font-size: .9rem; }
   .diag { font-size: .85rem; color: var(--muted); margin-top: .75rem; }
   .diag .warn { color: #c2410c; }
+  .diag .match { color: #15803d; }
   .err { color: #c2410c; }
   .row { display: flex; gap: .5rem; margin-bottom: .5rem; }
   .row input { margin-bottom: 0; }
@@ -267,6 +268,9 @@ function render(d) {
   $("ctx").textContent = ctx;
 
   const diag = [];
+  if (d.already_approved) {
+    diag.push(`<span class="match">✓ exact match — ${d.matched_drug_name} already approved for this disease area in our dataset</span>`);
+  }
   if (!d.smiles_valid) diag.push('<span class="warn">⚠ SMILES did not parse — molecule features are blank</span>');
   if (d.n_icd_total === 0) diag.push('<span class="warn">⚠ no ICD codes entered</span>');
   else diag.push(`${d.n_icd_in_vocab}/${d.n_icd_total} ICD code(s) recognized by the model`);
