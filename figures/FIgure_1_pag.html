@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Figure 1</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /*
+    Palette rationale:
+    - #1B3A6B  deep navy      — approved / positive signal (authoritative, clinical)
+    - #B0C4DE  steel blue     — approved light fill
+    - #C0392B  muted crimson  — failed / negative (conventional in clinical lit)
+    - #F2DEDE  crimson light
+    - #2C2C2C  near-black     — primary text
+    - #6B7280  warm gray      — secondary text / rules
+    - #F7F8FA  off-white      — panel background
+    Font: Helvetica Neue / Arial — standard for Nature, NEJM, Cell figures
+  */
+
+  :root {
+    --navy:        #1B3A6B;
+    --navy-light:  #D6E4F0;
+    --crimson:     #8B1A1A;
+    --crimson-light: #F5E6E6;
+    --ink:         #1A1A1A;
+    --mid:         #555555;
+    --rule:        #CCCCCC;
+    --rule-heavy:  #888888;
+    --bg:          #FFFFFF;
+    --panel-bg:    #F7F8FA;
+  }
+
+  body {
+    font-family: "Helvetica Neue", Arial, sans-serif;
+    font-size: 10.5px;
+    color: var(--ink);
+    background: #fff;
+    padding: 52px 56px;
+    max-width: 940px;
+    margin: 0 auto;
+    line-height: 1.45;
+  }
+
+  /* ─── outer figure wrapper ─── */
+  .figure { display: flex; flex-direction: column; gap: 30px; }
+
+  /* ─── panel letter ─── */
+  .ltr {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    margin-bottom: 9px;
+    display: block;
+    color: var(--ink);
+  }
+
+  /* ══════════════════════════════
+     PANEL A  — task comparison
+  ══════════════════════════════ */
+  .table-wrap { width: 100%; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10px;
+  }
+
+  thead th {
+    font-weight: 700;
+    font-size: 10px;
+    text-align: left;
+    padding: 6px 10px 6px 0;
+    border-top: 1.5px solid var(--ink);
+    border-bottom: 1px solid var(--rule-heavy);
+    color: var(--ink);
+  }
+
+  thead th:first-child { width: 22%; }
+  thead th:nth-child(2) { width: 24%; }
+
+  tbody td {
+    padding: 6px 10px 6px 0;
+    vertical-align: top;
+    border-bottom: 0.5px solid var(--rule);
+    color: var(--ink);
+    font-size: 10px;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: 1.5px solid var(--ink);
+  }
+
+  /* "This work" row */
+  .this td {
+    background: var(--navy-light);
+    font-weight: 600;
+    border-bottom: 1.5px solid var(--ink) !important;
+  }
+
+  .this td:first-child {
+    border-left: 3px solid var(--navy);
+    padding-left: 7px;
+  }
+
+  .yes { color: var(--navy); font-weight: 600; }
+  .no  { color: var(--mid);  font-weight: 400; }
+
+  /* ══════════════════════════════
+     ROW 2  — B + C side by side
+  ══════════════════════════════ */
+  .row2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 36px;
+    align-items: start;
+  }
+
+  /* ── Panel B ── */
+  .pair-block {
+    display: flex;
+    flex-direction: column;
+    gap: 13px;
+  }
+
+  .pair {
+    display: grid;
+    grid-template-columns: 108px 18px 1fr;
+    align-items: center;
+    gap: 0;
+  }
+
+  .mol-box {
+    border: 1px solid var(--ink);
+    padding: 7px 9px;
+    text-align: center;
+    background: #fff;
+  }
+
+  .mol-name {
+    font-weight: 700;
+    font-size: 10px;
+    display: block;
+    margin-bottom: 2px;
+  }
+
+  .mol-sub {
+    font-size: 8.5px;
+    color: var(--mid);
+    font-style: italic;
+  }
+
+  .pair-arrow {
+    text-align: center;
+    font-size: 13px;
+    color: var(--mid);
+  }
+
+  .ind-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .ind-row {
+    display: grid;
+    grid-template-columns: 12px 1fr 54px;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+  }
+
+  .swatch {
+    width: 11px;
+    height: 11px;
+    border: 1px solid var(--ink);
+    flex-shrink: 0;
+  }
+
+  .swatch-approved { background: var(--navy); }
+  .swatch-failed   { background: #fff; }
+
+  .ind-name { color: var(--ink); line-height: 1.3; }
+
+  .ind-score {
+    text-align: right;
+    font-size: 9.5px;
+    color: var(--mid);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .pair-divider {
+    border: none;
+    border-top: 0.5px solid var(--rule);
+    margin: 0;
+  }
+
+  /* legend */
+  .b-legend {
+    display: flex;
+    gap: 16px;
+    margin-top: 6px;
+    font-size: 9.5px;
+    color: var(--mid);
+  }
+
+  .b-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  /* ── Panel C ── */
+  /* stat grid */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    border-top: 1.5px solid var(--ink);
+    border-left: 0.5px solid var(--rule);
+  }
+
+  .stat {
+    border-right: 0.5px solid var(--rule);
+    border-bottom: 0.5px solid var(--rule);
+    padding: 8px 10px;
+    text-align: center;
+  }
+
+  .stat-n {
+    display: block;
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--ink);
+    margin-bottom: 2px;
+    letter-spacing: -0.01em;
+  }
+
+  .stat-n.approved { color: var(--navy); }
+  .stat-n.failed   { color: var(--crimson); }
+
+  .stat-desc {
+    font-size: 9px;
+    color: var(--mid);
+    line-height: 1.35;
+  }
+
+  /* imbalance bar */
+  .bar-section { margin-top: 14px; }
+
+  .bar-title {
+    font-size: 9.5px;
+    font-weight: 700;
+    color: var(--ink);
+    margin-bottom: 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .bar-track {
+    width: 100%;
+    height: 18px;
+    display: flex;
+    border: 1px solid var(--ink);
+    overflow: hidden;
+  }
+
+  .bar-a {
+    width: 17.5%;
+    background: var(--navy);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 8.5px;
+    font-weight: 700;
+    white-space: nowrap;
+    padding: 0 4px;
+  }
+
+  .bar-f {
+    flex: 1;
+    background: var(--crimson-light);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--crimson);
+    font-size: 8.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    padding: 0 4px;
+  }
+
+  .bar-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 4px;
+    font-size: 9px;
+    color: var(--mid);
+  }
+
+  /* pipeline */
+  .pipe-section { margin-top: 16px; }
+
+  .pipe-title {
+    font-size: 9.5px;
+    font-weight: 700;
+    color: var(--ink);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .pipe-row {
+    display: flex;
+    align-items: stretch;
+  }
+
+  .pipe-box {
+    flex: 1;
+    border: 0.5px solid var(--rule-heavy);
+    padding: 5px 6px;
+    font-size: 8.5px;
+    text-align: center;
+    line-height: 1.4;
+    background: #fff;
+    color: var(--ink);
+  }
+
+  .pipe-box.last {
+    background: var(--navy-light);
+    border-color: var(--navy);
+    font-weight: 600;
+    color: var(--navy);
+  }
+
+  .pipe-sep {
+    display: flex;
+    align-items: center;
+    padding: 0 2px;
+    font-size: 11px;
+    color: var(--mid);
+    flex-shrink: 0;
+  }
+
+  /* ── Caption ── */
+  .caption {
+    border-top: 1px solid var(--ink);
+    padding-top: 10px;
+    font-size: 9.5px;
+    line-height: 1.65;
+    color: var(--mid);
+  }
+
+  .caption b { color: var(--ink); font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="figure">
+
+  <!-- ══ PANEL A ══ -->
+  <div>
+    <span class="ltr">A</span>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Approach</th>
+            <th>Prediction unit</th>
+            <th>Individualized &amp; disease-specific</th>
+            <th>Trial-agnostic</th>
+            <th>Final approval label</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>LOA analysis</td>
+            <td>Disease / phase / modality rate</td>
+            <td class="no">No — aggregate only</td>
+            <td class="yes">Yes</td>
+            <td class="no">No</td>
+          </tr>
+          <tr>
+            <td>Drug-level approval</td>
+            <td>Drug</td>
+            <td class="no">No — not disease-specific</td>
+            <td class="yes">Yes</td>
+            <td class="yes">Yes</td>
+          </tr>
+          <tr>
+            <td>Trial-outcome prediction</td>
+            <td>Trial</td>
+            <td class="yes">Yes</td>
+            <td class="no">No — requires trial features</td>
+            <td class="no">No — trial endpoint</td>
+          </tr>
+          <tr class="this">
+            <td>This work</td>
+            <td>Drug–indication pair</td>
+            <td class="yes">Yes</td>
+            <td class="yes">Yes</td>
+            <td class="yes">Yes</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ══ ROW 2: B + C ══ -->
+  <div class="row2">
+
+    <!-- PANEL B -->
+    <div>
+      <span class="ltr">B</span>
+      <div class="pair-block">
+
+        <div class="pair">
+          <div class="mol-box">
+            <span class="mol-name">Cannabidiol</span>
+            <span class="mol-sub">SMILES + ICD-10</span>
+          </div>
+          <div class="pair-arrow">→</div>
+          <div class="ind-list">
+            <div class="ind-row">
+              <div class="swatch swatch-approved"></div>
+              <div class="ind-name">Lennox-Gastaut syndrome</div>
+              <div class="ind-score">p = 0.511</div>
+            </div>
+            <div class="ind-row">
+              <div class="swatch swatch-failed"></div>
+              <div class="ind-name">Schizophrenia</div>
+              <div class="ind-score">p = 0.247</div>
+            </div>
+          </div>
+        </div>
+
+        <hr class="pair-divider">
+
+        <div class="pair">
+          <div class="mol-box">
+            <span class="mol-name">Selinexor</span>
+            <span class="mol-sub">SMILES + ICD-10</span>
+          </div>
+          <div class="pair-arrow">→</div>
+          <div class="ind-list">
+            <div class="ind-row">
+              <div class="swatch swatch-approved"></div>
+              <div class="ind-name">Relapsed multiple myeloma</div>
+              <div class="ind-score">p = 0.446</div>
+            </div>
+            <div class="ind-row">
+              <div class="swatch swatch-failed"></div>
+              <div class="ind-name">Hypertrophic pyloric stenosis</div>
+              <div class="ind-score">p = 0.298</div>
+            </div>
+          </div>
+        </div>
+
+        <hr class="pair-divider">
+
+        <div class="pair">
+          <div class="mol-box">
+            <span class="mol-name">Trehalose</span>
+            <span class="mol-sub">SMILES + ICD-10</span>
+          </div>
+          <div class="pair-arrow">→</div>
+          <div class="ind-list">
+            <div class="ind-row">
+              <div class="swatch swatch-failed"></div>
+              <div class="ind-name">Parkinson disease</div>
+              <div class="ind-score">p = 0.151</div>
+            </div>
+            <div class="ind-row">
+              <div class="swatch swatch-failed"></div>
+              <div class="ind-name">Alzheimer disease</div>
+              <div class="ind-score">p = 0.077</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="b-legend">
+          <div class="b-legend-item">
+            <div class="swatch swatch-approved" style="width:11px;height:11px;border:1px solid #1A1A1A;background:#1B3A6B;flex-shrink:0"></div>
+            Approved indication
+          </div>
+          <div class="b-legend-item">
+            <div class="swatch swatch-failed" style="width:11px;height:11px;border:1px solid #1A1A1A;background:#fff;flex-shrink:0"></div>
+            Not approved
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PANEL C -->
+    <div>
+      <span class="ltr">C</span>
+
+      <div class="stat-grid">
+        <div class="stat">
+          <span class="stat-n">14,134</span>
+          <span class="stat-desc">drug–indication pairs</span>
+        </div>
+        <div class="stat">
+          <span class="stat-n">2,313</span>
+          <span class="stat-desc">unique drugs</span>
+        </div>
+        <div class="stat">
+          <span class="stat-n">4,190</span>
+          <span class="stat-desc">unique indications</span>
+        </div>
+        <div class="stat">
+          <span class="stat-n approved">2,469</span>
+          <span class="stat-desc">approved (training)</span>
+        </div>
+        <div class="stat">
+          <span class="stat-n failed">11,665</span>
+          <span class="stat-desc">failed (training)</span>
+        </div>
+        <div class="stat">
+          <span class="stat-n">2,637</span>
+          <span class="stat-desc">held-out test pairs<br>(624 approved, post-2019)</span>
+        </div>
+      </div>
+
+      <div class="bar-section">
+        <div class="bar-title">Training set class distribution</div>
+        <div class="bar-track">
+          <div class="bar-a">17.5% approved</div>
+          <div class="bar-f">82.5% failed</div>
+        </div>
+        <div class="bar-labels">
+          <span>n = 2,469</span>
+          <span>n = 11,665</span>
+        </div>
+      </div>
+
+      <div class="pipe-section">
+        <div class="pipe-title">Dataset construction</div>
+        <div class="pipe-row">
+          <div class="pipe-box">ClinicalTrials<br>.gov / AACT</div>
+          <div class="pipe-sep">→</div>
+          <div class="pipe-box">Drug–indication<br>pairs + FDA label</div>
+          <div class="pipe-sep">→</div>
+          <div class="pipe-box">Filter: SMILES<br>+ ICD-10</div>
+          <div class="pipe-sep">→</div>
+          <div class="pipe-box">Feature<br>attachment</div>
+          <div class="pipe-sep">→</div>
+          <div class="pipe-box last">Temporal split<br>train ≤2019<br>test &gt;2019</div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end row2 -->
+
+  <!-- ══ CAPTION ══ -->
+  <div class="caption">
+    <b>Figure 1. Defining the drug-indication approval-forecast task.</b>
+    (<b>A</b>) Comparison of prediction units across related task formulations. This work uniquely targets drug–indication pairs, enabling individualized disease-specific approval scoring without requiring trial-level features. Shaded row indicates this work.
+    (<b>B</b>) Illustrative case studies showing indication-level discrimination. The same molecule receives distinct predicted approval probabilities (<i>p</i>) across diseases, directionally consistent with known approval labels. Filled squares, approved indication; open squares, not approved. Scores are model outputs on the held-out test set.
+    (<b>C</b>) Locked cohort summary. Training set: 14,134 drug–indication pairs (2,469 approved, 11,665 failed; ~1:5 ratio, shown in bar). Held-out post-2019 test set: 2,637 pairs including 624 approvals. Temporal split is designed to mimic prospective deployment conditions.
+  </div>
+
+</div>
+</body>
+</html>
