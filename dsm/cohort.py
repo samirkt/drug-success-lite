@@ -69,7 +69,13 @@ def load_cohort(force: bool = False) -> dict:
 
     # Applicability-domain references, computed against the model's TRAINING pool only (ours_di is
     # train/test; "valid" folded in if ever present) — that's the data the model learned from.
-    train_mask = df["split"].isin(["train", "valid"]).to_numpy()
+    # If `split` is absent (e.g. an older minimized serving dataset), fall back to using all rows so
+    # serving still starts rather than crashing — the AD reference is then mildly broader.
+    if "split" in df.columns:
+        train_mask = df["split"].isin(["train", "valid"]).to_numpy()
+    else:
+        logger.warning("cohort dataset has no `split` column — using all rows for AD references")
+        train_mask = np.ones(len(df), dtype=bool)
     mol_ref = _molecular_reference(fp_matrix[train_mask], fp_popcount[train_mask])
     cat_counts = Counter(cat for cats, t in zip(icd_cats, train_mask) if t for cat in cats)
     cat_sizes_sorted = np.array(sorted(cat_counts.values()) or [0])
