@@ -19,7 +19,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from .cohort import lookup_exact_match
+from .cohort import training_support
 from .config import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,8 @@ def predict_one(smiles: str, icd_codes: list[str]) -> dict:
     calibrator = art.get("calibrator")
     proba = float(calibrator.predict([raw])[0]) if calibrator is not None else raw
 
-    match = lookup_exact_match(smiles, codes)
+    support = training_support(smiles, codes)
+    match = support["exact_match"]
     if match is not None:
         proba = 1.0
 
@@ -94,6 +95,12 @@ def predict_one(smiles: str, icd_codes: list[str]) -> dict:
         "already_approved": match is not None,
         "matched_drug_name": match["drug_name"] if match else None,
         "matched_indication": match["indication"] if match else None,
+        # training-data support (applicability domain): how far this query is from what the model
+        # learned from, combining molecular and disease proximity. See dsm/cohort.training_support.
+        "support_band": support["band"],
+        "support_score": support["support_score"],
+        "mol_similarity": support["molecular"],
+        "disease_support": support["disease"],
         "base_rate": art.get("base_rate"),
         "smiles_valid": smiles_valid,
         "n_icd_total": len(codes),

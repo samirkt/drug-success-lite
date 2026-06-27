@@ -34,6 +34,9 @@
   .diag { font-size: .85rem; color: var(--muted); margin-top: .75rem; }
   .diag .warn { color: #c2410c; }
   .diag .match { color: #15803d; }
+  .diag .ok { color: #15803d; font-weight: 600; }
+  .diag .mid { color: #b45309; font-weight: 600; }
+  .diag .low { color: #c2410c; font-weight: 600; }
   .err { color: #c2410c; }
   .row { display: flex; gap: .5rem; margin-bottom: .5rem; }
   .row input { margin-bottom: 0; }
@@ -274,6 +277,17 @@ function render(d) {
   if (!d.smiles_valid) diag.push('<span class="warn">⚠ SMILES did not parse — molecule features are blank</span>');
   if (d.n_icd_total === 0) diag.push('<span class="warn">⚠ no ICD codes entered</span>');
   else diag.push(`${d.n_icd_in_vocab}/${d.n_icd_total} ICD code(s) recognized by the model`);
+  // training-data support (applicability domain) — how far this query is from what the model saw
+  if (d.support_band && !d.already_approved) {
+    const cls = { "In-domain": "ok", "Borderline": "mid", "Out-of-domain": "low" }[d.support_band] || "";
+    const mol = d.mol_similarity || {}, dis = d.disease_support || {};
+    const bits = [];
+    if (mol.nn != null) bits.push(`nearest training molecule ${mol.nn.toFixed(2)} Tanimoto`);
+    if (dis.n_train != null) bits.push(`disease area in ${dis.n_train} training program${dis.n_train === 1 ? "" : "s"}`);
+    let s = `<span class="${cls}">training support: ${d.support_band.toLowerCase()}</span>`;
+    if (bits.length) s += ` (${bits.join("; ")})`;
+    diag.push(s);
+  }
   if (d.raw_score != null) diag.push(`calibrated (raw model score ${(d.raw_score * 100).toFixed(0)}%)`);
   if (d.model && d.model.roc_auc != null) {
     let m = `model test ROC-AUC ${d.model.roc_auc.toFixed(3)}`;

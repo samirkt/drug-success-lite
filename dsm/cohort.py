@@ -21,6 +21,7 @@ matrix-vector product, no per-row RDKit loop. Pure-python (no web deps); the Fas
 from __future__ import annotations
 
 import logging
+from collections import Counter
 
 import numpy as np
 import pandas as pd
@@ -58,27 +59,59 @@ def load_cohort(force: bool = False) -> dict:
     df = df.merge(fps, left_on="example_id", right_on="candidate_id", how="inner")
 
     fp_matrix = np.stack(df["ecfp4"].values).astype(np.uint8)   # (N, 2048)
+    fp_popcount = fp_matrix.sum(1).astype(np.int32)
     canon_smiles = [(s[0] if isinstance(s, (list, np.ndarray)) and len(s) else "") for s in df["smiles"]]
+    icd_cats = [set(_icd_category(list(c))) for c in df["icd_codes"]]
 
     # Distinct-drug key: the minimized serving dataset ships an opaque `drug_uid` (no DrugBank
     # references); the full local dataset still has `drugbank_id`. Either works as a grouping key.
     key_col = "drug_uid" if "drug_uid" in df.columns else "drugbank_id"
 
+    # Applicability-domain references, computed against the model's TRAINING pool only (ours_di is
+    # train/test; "valid" folded in if ever present) — that's the data the model learned from.
+    train_mask = df["split"].isin(["train", "valid"]).to_numpy()
+    mol_ref = _molecular_reference(fp_matrix[train_mask], fp_popcount[train_mask])
+    cat_counts = Counter(cat for cats, t in zip(icd_cats, train_mask) if t for cat in cats)
+    cat_sizes_sorted = np.array(sorted(cat_counts.values()) or [0])
+
     _COHORT = {
         "fp_matrix": fp_matrix,
-        "fp_popcount": fp_matrix.sum(1).astype(np.int32),
+        "fp_popcount": fp_popcount,
         "drug_uid": df[key_col].astype(str).to_numpy(),
         "drug_name": df["drug_name"].astype(str).to_numpy(),
         "indication": df["indication"].astype(str).to_numpy(),
         "label": df["label"].astype(np.int8).to_numpy(),
-        "icd_cats": [set(_icd_category(list(c))) for c in df["icd_codes"]],
+        "icd_cats": icd_cats,
         "canon_smiles": np.array(canon_smiles, dtype=object),
         "base_rate": float(df["label"].mean()),
         "n": len(df),
+        "train_mask": train_mask,
+        "mol_ref": mol_ref,                    # sorted train nearest-neighbor Tanimoto distribution
+        "cat_counts": cat_counts,              # train programs per 3-char ICD category
+        "cat_sizes_sorted": cat_sizes_sorted,  # sorted category sizes (disease AD reference)
     }
-    logger.info("loaded cohort: %d programs, base approval rate %.3f",
-                _COHORT["n"], _COHORT["base_rate"])
+    logger.info("loaded cohort: %d programs (%d train), base approval rate %.3f",
+                _COHORT["n"], int(train_mask.sum()), _COHORT["base_rate"])
     return _COHORT
+
+
+def _molecular_reference(fp: np.ndarray, pop: np.ndarray, *, sample: int = 1500,
+                         seed: int = 0) -> np.ndarray:
+    """Sorted distribution of each (sampled) train molecule's nearest-neighbor Tanimoto to the rest
+    of train. Sets data-driven applicability-domain cutoffs (no magic constants); sampling keeps
+    startup cheap versus the full O(N^2)."""
+    n = len(fp)
+    if n <= 1:
+        return np.array([0.0])
+    rng = np.random.default_rng(seed)
+    s = min(sample, n)
+    sel = rng.choice(n, size=s, replace=False)
+    inter = fp[sel].astype(np.int32) @ fp.T                  # (s, n)
+    union = pop[sel][:, None] + pop[None, :] - inter
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sim = np.where(union > 0, inter / union, 0.0)
+    sim[np.arange(s), sel] = -1.0                            # exclude self-match
+    return np.sort(sim.max(axis=1))
 
 
 def _query_fp(smiles: str):
@@ -124,25 +157,84 @@ def _dedupe_by_drug(idx: np.ndarray, sim: np.ndarray, c: dict) -> list[dict]:
     return sorted(by_drug.values(), key=lambda d: d["similarity"], reverse=True)
 
 
-def lookup_exact_match(smiles: str, icd_codes: list[str]) -> dict | None:
-    """If this exact molecule has already been approved for this disease area in our
-    dataset, return the matching program's identity. Otherwise None."""
+def _rank(sorted_ref: np.ndarray, value: float) -> float:
+    """Percentile rank of `value` in `sorted_ref` (fraction at or below it), in [0, 1]."""
+    if len(sorted_ref) == 0:
+        return 0.0
+    return float(np.searchsorted(sorted_ref, value, side="right") / len(sorted_ref))
+
+
+def _band(score: float) -> str:
+    """Applicability-domain band from a 0–1 percentile-rank score. Cutoffs are percentiles of the
+    model's own training distribution: below the 5th -> extrapolating; below the 25th -> borderline."""
+    if score < 0.05:
+        return "Out-of-domain"
+    if score < 0.25:
+        return "Borderline"
+    return "In-domain"
+
+
+_BAND_RANK = {"Out-of-domain": 0, "Borderline": 1, "In-domain": 2}
+
+
+def training_support(smiles: str, icd_codes: list[str]) -> dict:
+    """How close a (SMILES, ICD-10) query is to the examples the model was trained on — the model's
+    applicability domain. Combines molecular proximity (ECFP4 Tanimoto k-NN to train molecules) and
+    disease proximity (training programs sharing the query's high-level ICD category) via the
+    weakest link. Also reports `exact_match`: the same molecule already *approved* for this disease
+    area anywhere in our dataset (the certain endpoint of this signal). One Tanimoto pass."""
     c = load_cohort()
+    smiles = (smiles or "").strip()
     codes = [s.strip() for s in (icd_codes or []) if s and s.strip()]
     query_cats = set(_icd_category(codes))
     q = _query_fp(smiles) if smiles else None
-    if q is None or not query_cats:
-        return None
 
-    sim = _tanimoto(c["fp_matrix"], c["fp_popcount"], q)
-    same_molecule = sim >= _SELF_MATCH
-    same_disease = np.array([bool(cats & query_cats) for cats in c["icd_cats"]])
-    approved = c["label"] == 1
-    idx = np.where(same_molecule & same_disease & approved)[0]
-    if len(idx) == 0:
-        return None
-    i = idx[0]
-    return {"drug_name": c["drug_name"][i], "indication": c["indication"][i]}
+    out: dict = {
+        "exact_match": None,
+        "available": False,
+        "band": None,
+        "support_score": None,
+        "molecular": {"available": q is not None},
+        "disease": {"available": bool(query_cats)},
+    }
+    if q is None and not query_cats:
+        return out
+
+    sim = _tanimoto(c["fp_matrix"], c["fp_popcount"], q) if q is not None else None
+
+    # Exact match: same molecule (Tanimoto >= 0.999) approved for this disease area, anywhere in the
+    # dataset (train or test) — a factual "we've already seen this" claim, not an AD measure.
+    if sim is not None and query_cats:
+        same_disease = np.array([bool(cats & query_cats) for cats in c["icd_cats"]])
+        idx = np.where((sim >= _SELF_MATCH) & same_disease & (c["label"] == 1))[0]
+        if len(idx):
+            i = int(idx[0])
+            out["exact_match"] = {"drug_name": c["drug_name"][i], "indication": c["indication"][i]}
+
+    # Molecular AD: nearest-neighbor (and top-5) Tanimoto to the training molecules.
+    if sim is not None:
+        sim_train = sim[c["train_mask"]]
+        k = min(5, len(sim_train))
+        nn = float(sim_train.max()) if len(sim_train) else 0.0
+        knn = float(np.sort(sim_train)[-k:].mean()) if k else 0.0
+        score = _rank(c["mol_ref"], nn)
+        out["molecular"] = {"available": True, "nn": round(nn, 3), "knn": round(knn, 3),
+                            "score": round(score, 3), "band": _band(score)}
+
+    # Disease AD: how many training programs share the query's high-level ICD category.
+    if query_cats:
+        n_train = max((c["cat_counts"].get(cat, 0) for cat in query_cats), default=0)
+        category = max(query_cats, key=lambda cat: c["cat_counts"].get(cat, 0))
+        score = _rank(c["cat_sizes_sorted"], n_train)
+        out["disease"] = {"available": True, "category": category, "n_train": int(n_train),
+                          "score": round(score, 3), "band": _band(score)}
+
+    # Combined = weakest link across the two modalities the model uses.
+    if out["molecular"]["available"] and out["disease"]["available"]:
+        out["available"] = True
+        out["support_score"] = round(min(out["molecular"]["score"], out["disease"]["score"]), 3)
+        out["band"] = min((out["molecular"]["band"], out["disease"]["band"]), key=_BAND_RANK.get)
+    return out
 
 
 def cohort_stats(smiles: str, icd_codes: list[str]) -> dict:
@@ -229,3 +321,7 @@ if __name__ == "__main__":
     logger.info("molecular: %s", stats["molecular"])
     logger.info("disease:   %s", stats["disease"])
     logger.info("both:      %s", stats["both"])
+    # applicability domain: a marketed drug in a common area vs a messy-cased ICD code
+    logger.info("support (aspirin, i20.0): %s", training_support("CC(=O)Oc1ccccc1C(=O)O", ["i20.0"]))
+    logger.info("support (novel scaffold): %s",
+                training_support("O=C(N)c1ccc(-c2nnc3n2CCCCC3)cc1Br", ["Z99"]))

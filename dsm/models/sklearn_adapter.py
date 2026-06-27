@@ -68,9 +68,17 @@ class MoleculeFP:
 
 
 def _icd_category(codes: list[str]) -> list[str]:
-    """ICD-10 codes -> their 3-char category (the part before the dot): 'K51.90' -> 'K51'.
+    """ICD-10 codes -> their 3-char category, normalized. Strips case/punctuation/whitespace and
+    drops the sub-class so messy user input matches the model's vocabulary exactly as the clean
+    training data did: 'k51.90', ' K51.90 ', and 'K5190' all -> 'K51'. The model is trained only on
+    this high-level code, so sub-class differences ('C50.9' vs 'C50.91') collapse to one category.
     Module-level (not a lambda) so the fitted encoder stays picklable for serving."""
-    return [c.split(".")[0] for c in codes]
+    out = []
+    for c in codes:
+        cat = str(c).strip().upper().replace(".", "")[:3]
+        if cat:
+            out.append(cat)
+    return out
 
 
 def _make_encoders(features: list[str], df: pd.DataFrame) -> list:
