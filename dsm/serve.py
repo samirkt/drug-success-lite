@@ -82,8 +82,12 @@ def predict_one(smiles: str, icd_codes: list[str]) -> dict:
 
     support = training_support(smiles, codes)
     match = support["exact_match"]
-    if match is not None:
-        proba = 1.0
+    already_approved = bool(match and match["approved"])
+    already_failed = bool(match and not match["approved"])
+    if already_approved:
+        proba = 1.0   # this exact molecule already reached approval for this disease area
+    elif already_failed:
+        proba = 0.0   # this exact molecule was already tested and failed for this disease area
 
     from rdkit import Chem, RDLogger
     RDLogger.DisableLog("rdApp.*")
@@ -92,7 +96,8 @@ def predict_one(smiles: str, icd_codes: list[str]) -> dict:
     return {
         "approval_probability": proba,
         "raw_score": raw,
-        "already_approved": match is not None,
+        "already_approved": already_approved,
+        "already_failed": already_failed,
         "matched_drug_name": match["drug_name"] if match else None,
         "matched_indication": match["indication"] if match else None,
         # training-data support (applicability domain): how far this query is from what the model

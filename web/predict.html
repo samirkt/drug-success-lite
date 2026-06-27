@@ -26,7 +26,12 @@
            background: var(--accent); border: 0; border-radius: 8px; cursor: pointer; }
   button:disabled { opacity: .6; cursor: default; }
   #result { display: none; }
+  .prob-row { display: flex; align-items: baseline; gap: .75rem; flex-wrap: wrap; }
   .prob { font-size: 3rem; font-weight: 700; line-height: 1; }
+  .conf { display: inline-flex; align-items: center; gap: .4rem; font-size: 1rem; font-weight: 600; }
+  .conf .dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
+  .conf.ok { color: #15803d; } .conf.mid { color: #b45309; } .conf.low { color: #c2410c; }
+  .conf-sub { font-size: .85rem; color: var(--muted); margin-top: .6rem; }
   .bar { height: 10px; border-radius: 6px; background: var(--border); overflow: hidden;
          margin: .75rem 0; }
   .bar > div { height: 100%; background: var(--accent); width: 0; transition: width .4s; }
@@ -109,9 +114,13 @@
   </div>
 
   <div class="card" id="result">
-    <div class="prob"><span id="prob">–</span></div>
+    <div class="prob-row">
+      <div class="prob"><span id="prob">–</span></div>
+      <div class="conf" id="conf"><span class="dot"></span><span id="conf-label"></span></div>
+    </div>
     <div class="bar"><div id="probbar"></div></div>
     <div class="ctx" id="ctx"></div>
+    <div class="conf-sub" id="conf-sub"></div>
     <div class="diag" id="diag"></div>
   </div>
 
@@ -257,38 +266,67 @@ function renderCohort(d) {
   $("cohort").style.display = "block";
 }
 
+const CONF = {
+  "In-domain":     { label: "High confidence",   cls: "ok" },
+  "Borderline":    { label: "Medium confidence", cls: "mid" },
+  "Out-of-domain": { label: "Low confidence",    cls: "low" },
+};
+
 function render(d) {
   const pct = (d.approval_probability * 100).toFixed(1);
   $("prob").textContent = pct + "%";
   $("probbar").style.width = pct + "%";
 
-  let ctx = "predicted probability of eventual approval";
-  if (d.base_rate != null) {
-    const base = (d.base_rate * 100).toFixed(0);
-    const rel = d.approval_probability >= d.base_rate ? "above" : "below";
-    ctx += ` — ${rel} the ~${base}% base rate`;
+  // Confidence pill (alongside the probability) + evidence subtext.
+  const conf = $("conf"), sub = $("conf-sub");
+  conf.className = "conf";
+  const observed = d.already_approved || d.already_failed;
+  if (observed) {
+    conf.classList.add(d.already_approved ? "ok" : "low");
+    $("conf-label").textContent = d.already_approved
+      ? "✓ Confirmed — approved in our dataset"
+      : "✗ Confirmed — failed in our dataset";
+    conf.style.display = "";
+    sub.textContent = d.matched_drug_name
+      ? `matched ${d.matched_drug_name}${d.matched_indication ? ` (${d.matched_indication})` : ""}`
+      : "";
+  } else if (d.support_band && CONF[d.support_band]) {
+    const c = CONF[d.support_band];
+    conf.classList.add(c.cls);
+    $("conf-label").textContent = c.label;
+    conf.style.display = "";
+    const mol = d.mol_similarity, dis = d.disease_support, bits = [];
+    if (mol && mol.nn != null) bits.push(`nearest training molecule ${mol.nn.toFixed(2)} Tanimoto`);
+    if (dis && dis.n_train != null) {
+      let s = `disease area in ${dis.n_train} training program${dis.n_train === 1 ? "" : "s"}`;
+      if (d.n_icd_in_vocab > 0) s += " (recognized by model)";
+      bits.push(s);
+    }
+    sub.textContent = bits.join(" · ");
+  } else {
+    conf.style.display = "none";  // confidence not computable (invalid SMILES or no ICD)
+    sub.textContent = "";
+  }
+
+  // Context line: observed fact vs. prediction-vs-base-rate.
+  let ctx;
+  if (observed) {
+    ctx = "observed outcome in our dataset";
+  } else {
+    ctx = "predicted probability of eventual approval";
+    if (d.base_rate != null) {
+      const base = (d.base_rate * 100).toFixed(0);
+      const rel = d.approval_probability >= d.base_rate ? "above" : "below";
+      ctx += ` — ${rel} the ~${base}% base rate`;
+    }
   }
   $("ctx").textContent = ctx;
 
+  // Footnote: warnings + calibration + model metrics only.
   const diag = [];
-  if (d.already_approved) {
-    diag.push(`<span class="match">✓ exact match — ${d.matched_drug_name} already approved for this disease area in our dataset</span>`);
-  }
   if (!d.smiles_valid) diag.push('<span class="warn">⚠ SMILES did not parse — molecule features are blank</span>');
   if (d.n_icd_total === 0) diag.push('<span class="warn">⚠ no ICD codes entered</span>');
-  else diag.push(`${d.n_icd_in_vocab}/${d.n_icd_total} ICD code(s) recognized by the model`);
-  // training-data support (applicability domain) — how far this query is from what the model saw
-  if (d.support_band && !d.already_approved) {
-    const cls = { "In-domain": "ok", "Borderline": "mid", "Out-of-domain": "low" }[d.support_band] || "";
-    const mol = d.mol_similarity || {}, dis = d.disease_support || {};
-    const bits = [];
-    if (mol.nn != null) bits.push(`nearest training molecule ${mol.nn.toFixed(2)} Tanimoto`);
-    if (dis.n_train != null) bits.push(`disease area in ${dis.n_train} training program${dis.n_train === 1 ? "" : "s"}`);
-    let s = `<span class="${cls}">training support: ${d.support_band.toLowerCase()}</span>`;
-    if (bits.length) s += ` (${bits.join("; ")})`;
-    diag.push(s);
-  }
-  if (d.raw_score != null) diag.push(`calibrated (raw model score ${(d.raw_score * 100).toFixed(0)}%)`);
+  if (!observed && d.raw_score != null) diag.push(`calibrated (raw model score ${(d.raw_score * 100).toFixed(0)}%)`);
   if (d.model && d.model.roc_auc != null) {
     let m = `model test ROC-AUC ${d.model.roc_auc.toFixed(3)}`;
     if (d.model.brier != null) m += `, Brier ${d.model.brier.toFixed(3)}`;

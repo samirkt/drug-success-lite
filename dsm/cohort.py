@@ -202,14 +202,19 @@ def training_support(smiles: str, icd_codes: list[str]) -> dict:
 
     sim = _tanimoto(c["fp_matrix"], c["fp_popcount"], q) if q is not None else None
 
-    # Exact match: same molecule (Tanimoto >= 0.999) approved for this disease area, anywhere in the
-    # dataset (train or test) — a factual "we've already seen this" claim, not an AD measure.
+    # Exact match: same molecule (Tanimoto >= 0.999) already tested for this disease area, anywhere
+    # in the dataset (train or test) — a factual "we've already seen this" claim, not an AD measure.
+    # Approval takes precedence over failure (a terminal positive outcome dominates a prior failure).
     if sim is not None and query_cats:
         same_disease = np.array([bool(cats & query_cats) for cats in c["icd_cats"]])
-        idx = np.where((sim >= _SELF_MATCH) & same_disease & (c["label"] == 1))[0]
-        if len(idx):
-            i = int(idx[0])
-            out["exact_match"] = {"drug_name": c["drug_name"][i], "indication": c["indication"][i]}
+        same_md = (sim >= _SELF_MATCH) & same_disease
+        appr = np.where(same_md & (c["label"] == 1))[0]
+        fail = np.where(same_md & (c["label"] == 0))[0]
+        hit = int(appr[0]) if len(appr) else (int(fail[0]) if len(fail) else None)
+        if hit is not None:
+            out["exact_match"] = {"drug_name": c["drug_name"][hit],
+                                  "indication": c["indication"][hit],
+                                  "approved": bool(c["label"][hit] == 1)}
 
     # Molecular AD: nearest-neighbor (and top-5) Tanimoto to the training molecules.
     if sim is not None:
