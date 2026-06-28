@@ -1,41 +1,71 @@
 #!/usr/bin/env python3
 """Build paper Figures 1-3 for the drug-indication approval-forecast project.
 
-Single, self-contained script — matplotlib + numpy only, NO repo imports. All numbers are the
-locked values from the experiments (ours_di, category-level ICD, PCA-50 per group; max-F1
-convention) and `cohort_summary.ipynb`, with bootstrap 95% CIs pulled from runs/*/metrics.json.
-Edit the DATA section to update.
+Numbers are loaded LIVE from the repo so the figures always reflect the latest training — point
+estimates + bootstrap 95% CIs from `runs/<exp>/metrics.json`, seen/unseen from `dsm.stratify`, and
+cohort stats from the materialized `ours_di` dataset. Only the schematic text (Figure 1A/1B) and the
+label→experiment wiring are hard-coded. Re-run after retraining; no manual number edits.
 
-    python make_figures.py            # writes figures/figure{1,2,3}.{png,pdf}
+    uv run python make_figures.py     # writes figures/figure{1,2,3}.{png,pdf}
 """
 
 from __future__ import annotations
 
+import json
 import os
 import textwrap
+from pathlib import Path
 
 import matplotlib
+import pandas as pd
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
+from dsm.datasets import materialize
+from dsm.experiments import DATASETS
+from dsm.stratify import stratify_experiment
+
 OUTDIR = "figures"
+RUNS = Path("runs")
+
 
 # ----------------------------------------------------------------------------- #
-# DATA (locked numbers)
+# Live data loaders — numbers come straight from runs/ + the dataset
 # ----------------------------------------------------------------------------- #
-COHORT = {
-    "total": 14_134,
-    "approved": 2_469,
-    "failed": 11_665,
-    "test_pairs": 2_637,
-    "test_pos": 624,
-    "unique_drugs": 2_313,
-    "unique_indications": 4_190,
-    "avg_ind_per_drug": 5.18,
-}
-POS_RATE = COHORT["test_pos"] / COHORT["test_pairs"]  # PR-AUC random baseline (~0.237)
+def _metrics(name: str):
+    """(roc, roc_lo, roc_hi, pr, pr_lo, pr_hi) from runs/<name>/metrics.json (CIs -> point if absent)."""
+    o = json.loads((RUNS / name / "metrics.json").read_text())["overall"]
+    roc, pr = o["roc_auc"], o["pr_auc"]
+    return (roc, o.get("roc_auc_lo", roc), o.get("roc_auc_hi", roc),
+            pr, o.get("pr_auc_lo", pr), o.get("pr_auc_hi", pr))
+
+
+def _seen_unseen(name: str, n_boot: int = 1000):
+    r = stratify_experiment(name, bootstrap_ci=n_boot)
+    return r["seen"], r["unseen"]
+
+
+def _cohort() -> dict:
+    df = pd.read_parquet(materialize(DATASETS["ours_di"]))
+    test = df[df["split"] == "test"]
+    return {
+        "total": len(df),
+        "approved": int(df["label"].sum()),
+        "failed": int((df["label"] == 0).sum()),
+        "test_pairs": len(test),
+        "test_pos": int(test["label"].sum()),
+        "unique_drugs": int(df["drugbank_id"].nunique()),
+        "unique_indications": int(df["indication"].nunique()),
+        "avg_ind_per_drug": float(df.groupby("drugbank_id")["indication"].nunique().mean()),
+    }
+
+# ----------------------------------------------------------------------------- #
+# DATA — schematic text is fixed; all numbers are loaded from the repo below.
+# ----------------------------------------------------------------------------- #
+COHORT = _cohort()
+POS_RATE = COHORT["test_pos"] / COHORT["test_pairs"]  # PR-AUC random baseline
 
 # Figure 1A — prediction-unit comparison.
 F1_HEADERS = ["Prior task", "Prediction unit", "Limitation"]
@@ -59,31 +89,39 @@ F1_PIPELINE = [
 ]
 
 # Figure 2 — task-specific model vs transferred baselines.
-# (label, task origin, roc, roc_lo, roc_hi, pr, pr_lo, pr_hi, is_transfer)
-F2_MODELS = [
-    ("ChemAP", "built for drug approval", 0.462, 0.434, 0.488, 0.218, 0.199, 0.240, True),
-    ("HINT adapted", "built for trial outcomes", 0.619, 0.596, 0.643, 0.334, 0.307, 0.369, True),
-    ("molecule only", "", 0.721, 0.698, 0.741, 0.419, 0.381, 0.458, False),
-    ("molecule + disease", "", 0.744, 0.721, 0.765, 0.489, 0.450, 0.528, False),
-    ("full model", "", 0.759, 0.738, 0.779, 0.512, 0.470, 0.553, False),
+# Wiring only: (label, task origin, experiment, is_transfer); numbers loaded from runs/.
+_F2 = [
+    ("ChemAP", "built for drug approval", "chemap_di_2019", True),
+    ("HINT adapted", "built for trial outcomes", "hint_di_2019", True),
+    ("molecule only", "", "abl_molecule", False),
+    ("molecule + disease", "", "abl_md", False),
+    ("full model", "", "abl_mdtpa", False),
 ]
+# -> (label, origin, roc, roc_lo, roc_hi, pr, pr_lo, pr_hi, is_transfer)
+F2_MODELS = [(lbl, origin, *_metrics(exp), is_t) for lbl, origin, exp, is_t in _F2]
 
-# Figure 3A — feature-set ladder (ROC-AUC). (label, roc, lo, hi, kind: 'single'|'cumulative')
-F3_LADDER = [
-    ("pathway", 0.605, 0.583, 0.629, "single"),
-    ("target", 0.624, 0.599, 0.649, "single"),
-    ("disease", 0.634, 0.609, 0.657, "single"),
-    ("ADMET", 0.714, 0.692, 0.734, "single"),
-    ("molecule", 0.721, 0.698, 0.741, "single"),
-    ("molecule + disease", 0.744, 0.721, 0.765, "cumulative"),
-    ("molecule + disease + target", 0.755, 0.733, 0.776, "cumulative"),
-    ("full", 0.759, 0.738, 0.779, "cumulative"),
+# Figure 3A — feature-set ladder. Wiring only: (label, experiment, kind); ROC+CI from runs/,
+# sorted ascending so the "ladder" holds however the numbers move.
+_F3 = [
+    ("pathway", "abl_pathway", "single"),
+    ("target", "abl_target", "single"),
+    ("disease", "abl_disease", "single"),
+    ("ADMET", "abl_admet", "single"),
+    ("molecule", "abl_molecule", "single"),
+    ("molecule + disease", "abl_md", "cumulative"),
+    ("molecule + disease + target", "abl_mdt", "cumulative"),
+    ("full", "abl_mdtpa", "cumulative"),
 ]
+F3_LADDER = sorted(
+    [(lbl, (m := _metrics(exp))[0], m[1], m[2], kind) for lbl, exp, kind in _F3],
+    key=lambda r: r[1],
+)
 
-# Figure 3B — seen vs unseen drugs (full model, ROC-AUC).
+# Figure 3B — seen vs unseen drugs for the full model (abl_mdtpa), from dsm.stratify.
+_seen, _unseen = _seen_unseen("abl_mdtpa")
 F3_SEEN_UNSEEN = [
-    ("seen drugs", 0.765, 0.742, 0.786, 2270),
-    ("unseen drugs", 0.727, 0.670, 0.782, 367),
+    ("seen drugs", _seen["roc_auc"], _seen["roc_auc_lo"], _seen["roc_auc_hi"], _seen["n"]),
+    ("unseen drugs", _unseen["roc_auc"], _unseen["roc_auc_lo"], _unseen["roc_auc_hi"], _unseen["n"]),
 ]
 
 # colours
