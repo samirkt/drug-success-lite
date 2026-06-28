@@ -108,10 +108,12 @@ class MultiHot:
         counts: Counter[str] = Counter()
         for tokens in self._tokens(df):
             counts.update(set(tokens))  # dedup within row
+        # top_k=None keeps every token seen in train (Counter.most_common(None) returns all) — no
+        # cap, no "other"-bucketing of rare codes.
         self.vocab = [t for t, _ in counts.most_common(self.top_k)]
         self._index = {t: i for i, t in enumerate(self.vocab)}
         logger.info(
-            "%s: fit on %d rows; vocab=%d (top_k=%d)",
+            "%s: fit on %d rows; vocab=%d (top_k=%s)",
             self.prefix, len(df), len(self.vocab), self.top_k,
         )
 

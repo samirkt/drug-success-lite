@@ -26,6 +26,7 @@ import pandas as pd
 from ..encoders import MultiHot
 from ..evaluate import metrics
 from ..features import build_group
+from ..icd_hierarchy import icd_ancestor_tokens
 from ..model import build_model
 
 logger = logging.getLogger(__name__)
@@ -89,11 +90,12 @@ def _make_encoders(features: list[str], df: pd.DataFrame) -> list:
         if n in ("molecule", "mol"):
             encs.append(MoleculeFP())
         elif n in ("disease", "icd"):
-            # ICD-code multi-hot everywhere, truncated to the 3-char category (e.g. K51.90 -> K51)
-            # so coverage is robust to subcode choice — full-resolution codes are too sparse (6k+
-            # distinct, ~97% out of a top-200 vocab), which made distinct diseases collapse to the
-            # same "other" bucket. disease_area / MeSH are intentionally not used.
-            encs.append(MultiHot("icd_codes", prefix="icd", top_k=200, token_fn=_icd_category))
+            # Multi-hot over each ICD code AND its ICD-10-CM hierarchy ancestors (category / block /
+            # chapter) — no top-K cap (every train token kept; no "other"-bucketing), so distinct
+            # diseases stay distinct while sharing signal up the hierarchy. The high-dim sparse block
+            # is compressed by TruncatedSVD downstream (see fit_encoders_clf). disease_area / MeSH
+            # are intentionally not used.
+            encs.append(MultiHot("icd_codes", prefix="icd", top_k=None, token_fn=icd_ancestor_tokens))
         elif n in ("admet", "target", "pathway", "target_genes"):
             if not _group_available(n, df):
                 raise ValueError(
@@ -165,13 +167,18 @@ def fit_encoders_clf(train_df, features, *, model: str = "xgb", seed: int = 0,
 
     pcas = None
     if pca:
-        from sklearn.decomposition import PCA
+        from sklearn.decomposition import PCA, TruncatedSVD
         pcas = []
         for e in encoders:
             mat = e.transform(inner_df)
-            p = PCA(n_components=min(pca, mat.shape[1]), random_state=seed)
-            p.fit(mat)
-            pcas.append(p)
+            n_comp = min(pca, mat.shape[1] - 1)
+            # disease is a high-dim sparse multi-hot -> TruncatedSVD (works on sparse, no centering);
+            # dense groups (e.g. the molecule fingerprint) keep PCA.
+            is_disease = isinstance(e, MultiHot) and e.column == "icd_codes"
+            reducer = (TruncatedSVD(n_components=n_comp, random_state=seed) if is_disease
+                       else PCA(n_components=n_comp, random_state=seed))
+            reducer.fit(mat)
+            pcas.append(reducer)
     pipeline = FeaturePipeline(encoders, pcas)
 
     X_inner = pipeline.transform(inner_df)
